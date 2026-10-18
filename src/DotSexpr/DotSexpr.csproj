@@ -1,0 +1,28 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <Nullable>enable</Nullable>
+        <TargetFrameworks>netstandard2.1;net10.0</TargetFrameworks>
+        <LangVersion>12</LangVersion>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <Version>0.0.1</Version>
+        <PackageId>DotSexpr</PackageId>
+        <Authors>ts696</Authors>
+        <Description>An S-expression parser and deserializer for .NET Standard 2.1 and .NET 10.</Description>
+        <Copyright>Copyright (c) 2026 ts696</Copyright>
+        <PackageProjectUrl>https://github.com/ts696/DotSexpr</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/ts696/DotSexpr.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageTags>sexpr;s-expression;parser;deserializer;unity</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="../../README.md" Pack="true" PackagePath="/" />
+        <None Include="../../LICENSE" Pack="true" PackagePath="/" />
+    </ItemGroup>
+
+</Project>
