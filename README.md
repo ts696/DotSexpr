@@ -1,7 +1,6 @@
 # DotSexpr
 
-DotSexpr is an S-expression parser and deserializer for .NET Standard 2.1 and .NET 10.
-The .NET Standard 2.1 target is intended for use with Unity 6.
+DotSexpr is an S-expression parser and deserializer for .NET and Unity, targeting .NET 10 and .NET Standard 2.1.
 
 The parser design was inspired by [REDox](https://github.com/CAPCOM-TD-OSS/REDox).
 
