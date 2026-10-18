@@ -227,4 +227,18 @@ public class DeserializeTests
         Assert.That(() => SexprSerializer.Deserialize<TestAgent>(text),
             Throws.TypeOf<SexprSerializerException>());
     }
+
+    public struct TestPersonStruct
+    {
+        public int Age { get; set; }
+    }
+
+    [Test]
+    public void Deserialize_Struct_ReturnsPopulatedValue()
+    {
+        var person = SexprSerializer.Deserialize<TestPersonStruct>(
+            "(:Age 20)");
+
+        Assert.That(person.Age, Is.EqualTo(20));
+    }
 }

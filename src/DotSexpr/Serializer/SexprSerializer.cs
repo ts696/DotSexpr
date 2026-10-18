@@ -14,7 +14,7 @@ public static class SexprSerializer
     public static T Deserialize<T>(string text)
     {
         var targetType = typeof(T);
-        var target = (T)Activator.CreateInstance(targetType)!;
+        object target = Activator.CreateInstance(targetType)!;
 
         using var document = SDocument.Parse(text);
         var root = document.RootNode;
@@ -24,7 +24,7 @@ public static class SexprSerializer
         }
 
         DeserializeObject(root, targetType, target);
-        return target;
+        return (T)target;
     }
 
     private static void DeserializeObject(SNode node, Type targetType, object target)
