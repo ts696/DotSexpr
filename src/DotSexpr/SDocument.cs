@@ -20,6 +20,7 @@ public class SDocument : IDisposable
     private const int UnterminatedString = -1;
     private const int InvalidStringUtf8 = -2;
     private const int InvalidStringContent = -3;
+    private const int RootId = 0;
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
 #if NET8_0_OR_GREATER
     private static readonly SearchValues<byte> StringSpecialCharacters = CreateStringSpecialCharacters();
@@ -34,11 +35,9 @@ public class SDocument : IDisposable
         get
         {
             ThrowIfDisposed();
-            return new(this, _rootId);
+            return new(this, RootId);
         }
     }
-
-    private readonly int _rootId = 0;
 
     public ReadOnlyMemory<byte> Source
     {
@@ -67,7 +66,7 @@ public class SDocument : IDisposable
         _tokens = ArrayPool<SToken>.Shared.Rent(capacity);
     }
 
-    public SToken GetToken(int id)
+    internal SToken GetToken(int id)
     {
         ThrowIfDisposed();
         return _tokens[id];
