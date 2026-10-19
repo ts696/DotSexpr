@@ -216,13 +216,15 @@ public class DeserializeTests
         AssertError(error, "$", 0, 1, 0);
     }
 
-    [Test]
-    public void Deserialize_NonListObjectValue_ThrowsSerializerException()
+    [TestCase("(:Owner bob)", "$.Owner", 8)]
+    [TestCase("(:Owner (:Age))", "$.Owner.Age", 9)]
+    [TestCase("(:Owner (Age bob))", "$.Owner", 9)]
+    public void Deserialize_InvalidNestedObject_ReportsRelevantToken(string text, string path, int offset)
     {
         var error = Assert.Throws<SexprSerializerException>(
-            () => SexprSerializer.Deserialize<TestAccount>("(:Owner bob)"))!;
+            () => SexprSerializer.Deserialize<TestAccount>(text))!;
 
-        AssertError(error, "$.Owner", 8, 1, 8);
+        AssertError(error, path, offset, 1, offset);
     }
 
     [TestCase("(:Tasks 10)", "$.Tasks", 8)]

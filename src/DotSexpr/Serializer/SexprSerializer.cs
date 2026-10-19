@@ -1,5 +1,4 @@
 using System;
-using System.Globalization;
 using System.Reflection;
 
 namespace DotSexpr.Serializer;
@@ -21,19 +20,18 @@ public static class SexprSerializer
         var root = document.RootNode;
         if (!root.Token.IsList)
         {
-            throw new SexprSerializerException("The root value must be a list.", root, "$");
+            throw new SexprSerializerException("The root value must be a list.", root);
         }
 
-        DeserializeObject(root, targetType, target, "$");
+        DeserializeObject(root, targetType, target);
         return (T)target;
     }
 
-    private static void DeserializeObject(SNode node, Type targetType, object target, string path)
+    private static void DeserializeObject(SNode node, Type targetType, object target)
     {
         PropertyInfo? currentProperty = null;
         string? currentKey = null;
         var keyNode = node;
-        var propertyPath = path;
         var state = ReadState.Key;
 
         foreach (var current in node)
@@ -44,18 +42,17 @@ public static class SexprSerializer
                     {
                         if (!current.Token.IsSymbol)
                         {
-                            throw new SexprSerializerException("Property keys must be symbols beginning with ':'.", current, path);
+                            throw new SexprSerializerException("Property keys must be symbols beginning with ':'.", current);
                         }
 
                         var key = current.GetSymbol();
                         if (key.Length < 2 || key[0] != ':')
                         {
-                            throw new SexprSerializerException($"Invalid property key '{key}'. Expected ':' followed by a property name.", current, path);
+                            throw new SexprSerializerException($"Invalid property key '{key}'. Expected ':' followed by a property name.", current);
                         }
 
                         currentKey = key;
                         keyNode = current;
-                        propertyPath = AppendPropertyPath(path, key.Substring(1));
                         currentProperty = targetType.GetProperty(key.Substring(1));
                         state = ReadState.Value;
                         break;
@@ -68,35 +65,43 @@ public static class SexprSerializer
                         continue;
                     }
 
-                    var propertyType = currentProperty.PropertyType;
-                    if (IsScalarType(propertyType))
+                    try
                     {
-                        var value = DeserializeScalar(current, propertyType, $"property '{currentKey}'", propertyPath);
-                        currentProperty.SetValue(target, value);
-                    }
-                    else if (current.Token.IsList)
-                    {
-                        if (propertyType.IsArray)
+                        var propertyType = currentProperty.PropertyType;
+                        if (IsScalarType(propertyType))
                         {
-                            var arrayTarget = Array.CreateInstance(propertyType.GetElementType()!, current.Count);
-                            DeserializeArray(current, propertyType, arrayTarget, propertyPath);
-                            currentProperty.SetValue(target, arrayTarget);
+                            var value = DeserializeScalar(current, propertyType, currentKey);
+                            currentProperty.SetValue(target, value);
                         }
-                        else if (propertyType == typeof(Expression))
+                        else if (current.Token.IsList)
                         {
-                            var expression = DeserializeExpression(current, propertyPath);
-                            currentProperty.SetValue(target, expression);
+                            if (propertyType.IsArray)
+                            {
+                                var arrayTarget = Array.CreateInstance(propertyType.GetElementType()!, current.Count);
+                                DeserializeArray(current, propertyType, arrayTarget);
+                                currentProperty.SetValue(target, arrayTarget);
+                            }
+                            else if (propertyType == typeof(Expression))
+                            {
+                                var expression = DeserializeExpression(current);
+                                currentProperty.SetValue(target, expression);
+                            }
+                            else
+                            {
+                                var nestedTarget = Activator.CreateInstance(propertyType)!;
+                                DeserializeObject(current, propertyType, nestedTarget);
+                                currentProperty.SetValue(target, nestedTarget);
+                            }
                         }
                         else
                         {
-                            var nestedTarget = Activator.CreateInstance(propertyType)!;
-                            DeserializeObject(current, propertyType, nestedTarget, propertyPath);
-                            currentProperty.SetValue(target, nestedTarget);
+                            throw new SexprSerializerException($"Cannot deserialize property '{currentKey}' as '{propertyType.Name}'. Expected a list.", current);
                         }
                     }
-                    else
+                    catch (SexprSerializerException exception)
                     {
-                        throw new SexprSerializerException($"Cannot deserialize property '{currentKey}' as '{propertyType.Name}'. Expected a list.", current, propertyPath);
+                        exception.PrependProperty(currentKey!.Substring(1));
+                        throw;
                     }
                     break;
             }
@@ -104,7 +109,9 @@ public static class SexprSerializer
 
         if (state == ReadState.Value)
         {
-            throw new SexprSerializerException($"Expected a value after property key '{currentKey}'.", keyNode, propertyPath);
+            var exception = new SexprSerializerException($"Expected a value after property key '{currentKey}'.", keyNode);
+            exception.PrependProperty(currentKey!.Substring(1));
+            throw exception;
         }
     }
 
@@ -114,14 +121,14 @@ public static class SexprSerializer
             || type == typeof(float) || type == typeof(double);
     }
 
-    private static object DeserializeScalar(SNode node, Type targetType, string targetName, string path)
+    private static object DeserializeScalar(SNode node, Type targetType, string? propertyKey = null, int arrayIndex = 0)
     {
         var token = node.Token;
         var isString = targetType == typeof(string);
         if ((isString && !token.IsSymbol && !token.IsString) || (!isString && !token.IsNumber))
         {
             var expected = isString ? "a symbol or string" : "a number";
-            throw new SexprSerializerException($"Cannot deserialize {targetName} as '{targetType.Name}'. Expected {expected}.", node, path);
+            throw new SexprSerializerException($"Cannot deserialize {GetTargetName(propertyKey, arrayIndex)} as '{targetType.Name}'. Expected {expected}.", node);
         }
 
         if (isString)
@@ -149,46 +156,58 @@ public static class SexprSerializer
         }
         catch (Exception exception) when (exception is FormatException or OverflowException)
         {
-            throw new SexprSerializerException($"Cannot deserialize {targetName} as '{targetType.Name}'.", node, path, exception);
+            throw new SexprSerializerException($"Cannot deserialize {GetTargetName(propertyKey, arrayIndex)} as '{targetType.Name}'.", node, exception);
         }
 
         throw new NotSupportedException($"Type '{targetType.Name}' is not supported as a scalar value.");
     }
 
-    private static void DeserializeArray(SNode node, Type targetType, Array target, string path)
+    private static string GetTargetName(string? propertyKey, int arrayIndex)
+    {
+        return propertyKey == null ? $"array element at index {arrayIndex}" : $"property '{propertyKey}'";
+    }
+
+    private static void DeserializeArray(SNode node, Type targetType, Array target)
     {
         var elementType = targetType.GetElementType()!;
         var index = 0;
 
-        foreach (var current in node)
+        try
         {
-            var elementPath = AppendIndexPath(path, index);
-            if (IsScalarType(elementType))
+            foreach (var current in node)
             {
-                var value = DeserializeScalar(current, elementType, $"array element at index {index}", elementPath);
-                target.SetValue(value, index);
-            }
-            else if (elementType == typeof(Expression))
-            {
-                var expression = DeserializeExpression(current, elementPath);
-                target.SetValue(expression, index);
-            }
-            else
-            {
-                if (!current.Token.IsList)
+                if (IsScalarType(elementType))
                 {
-                    throw new SexprSerializerException($"Cannot deserialize array element at index {index} as '{elementType.Name}'. Expected a list.", current, elementPath);
+                    var value = DeserializeScalar(current, elementType, arrayIndex: index);
+                    target.SetValue(value, index);
                 }
+                else if (elementType == typeof(Expression))
+                {
+                    var expression = DeserializeExpression(current);
+                    target.SetValue(expression, index);
+                }
+                else
+                {
+                    if (!current.Token.IsList)
+                    {
+                        throw new SexprSerializerException($"Cannot deserialize array element at index {index} as '{elementType.Name}'. Expected a list.", current);
+                    }
 
-                var element = Activator.CreateInstance(elementType)!;
-                DeserializeObject(current, elementType, element, elementPath);
-                target.SetValue(element, index);
+                    var element = Activator.CreateInstance(elementType)!;
+                    DeserializeObject(current, elementType, element);
+                    target.SetValue(element, index);
+                }
+                index++;
             }
-            index++;
+        }
+        catch (SexprSerializerException exception)
+        {
+            exception.PrependIndex(index);
+            throw;
         }
     }
 
-    private static Expression DeserializeExpression(SNode node, string path)
+    private static Expression DeserializeExpression(SNode node)
     {
         if (node.Token.IsSymbol)
         {
@@ -198,54 +217,43 @@ public static class SexprSerializer
         {
             if (node.Count <= 0)
             {
-                throw new SexprSerializerException("A call expression must contain a function name.", node, path);
+                throw new SexprSerializerException("A call expression must contain a function name.", node);
             }
 
             var index = 0;
             var arguments = new Expression[node.Count - 1];
             CallExpression call = null!;
 
-            foreach (var current in node)
+            try
             {
-                if (index == 0)
+                foreach (var current in node)
                 {
-                    if (!current.Token.IsSymbol)
+                    if (index == 0)
                     {
-                        throw new SexprSerializerException("A call expression's function name must be a symbol.", current, AppendIndexPath(path, index));
+                        if (!current.Token.IsSymbol)
+                        {
+                            throw new SexprSerializerException("A call expression's function name must be a symbol.", current);
+                        }
+
+                        call = new CallExpression(current.GetSymbol(), arguments);
+                    }
+                    else
+                    {
+                        arguments[index - 1] = DeserializeExpression(current);
                     }
 
-                    call = new CallExpression(current.GetSymbol(), arguments);
+                    index++;
                 }
-                else
-                {
-                    arguments[index - 1] = DeserializeExpression(current, AppendIndexPath(path, index));
-                }
-
-                index++;
+            }
+            catch (SexprSerializerException exception)
+            {
+                exception.PrependIndex(index);
+                throw;
             }
 
             return call;
         }
 
-        throw new SexprSerializerException("Expected a symbol or a non-empty list for an expression.", node, path);
-    }
-
-    private static string AppendIndexPath(string path, int index)
-    {
-        return $"{path}[{index.ToString(CultureInfo.InvariantCulture)}]";
-    }
-
-    private static string AppendPropertyPath(string path, string name)
-    {
-        // Quote non-identifier keys so that punctuation cannot be mistaken for path syntax.
-        for (var i = 0; i < name.Length; i++)
-        {
-            if (name[i] != '_' && !(i == 0 ? char.IsLetter(name[i]) : char.IsLetterOrDigit(name[i])))
-            {
-                return $"{path}['{name.Replace("\\", "\\\\").Replace("'", "\\'")}']";
-            }
-        }
-
-        return $"{path}.{name}";
+        throw new SexprSerializerException("Expected a symbol or a non-empty list for an expression.", node);
     }
 }
