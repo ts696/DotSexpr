@@ -159,7 +159,7 @@ public static class SexprSerializer
             throw new SexprSerializerException($"Cannot deserialize {GetTargetName(propertyKey, arrayIndex)} as '{targetType.Name}'.", node, exception);
         }
 
-        throw new NotSupportedException($"Type '{targetType.Name}' is not supported as a scalar value.");
+        throw new SexprSerializerException($"Type '{targetType.Name}' is not supported as a scalar value.");
     }
 
     private static string GetTargetName(string? propertyKey, int arrayIndex)
