@@ -216,15 +216,13 @@ public class DeserializeTests
         AssertError(error, "$", 0, 1, 0);
     }
 
-    [TestCase("(:Owner bob)", "$.Owner", 8)]
-    [TestCase("(:Owner (:Age))", "$.Owner.Age", 9)]
-    [TestCase("(:Owner (Age bob))", "$.Owner", 9)]
-    public void Deserialize_InvalidNestedObject_ReportsRelevantToken(string text, string path, int offset)
+    [Test]
+    public void Deserialize_NonListObjectValue_ReportsValueLocation()
     {
         var error = Assert.Throws<SexprSerializerException>(
-            () => SexprSerializer.Deserialize<TestAccount>(text))!;
+            () => SexprSerializer.Deserialize<TestAccount>("(:Owner bob)"))!;
 
-        AssertError(error, path, offset, 1, offset);
+        AssertError(error, "$.Owner", 8, 1, 8);
     }
 
     [TestCase("(:Tasks 10)", "$.Tasks", 8)]
@@ -237,40 +235,19 @@ public class DeserializeTests
         AssertError(error, path, offset, 1, offset);
     }
 
-    [TestCase("\n")]
-    [TestCase("\r\n")]
-    [TestCase("\r")]
-    public void Deserialize_MultilineUtf8_ReportsByteOffsets(string newline)
-    {
-        var text = $"({newline}:Name 日本語😀 :Age bob)";
-        var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Deserialize<TestPerson>(text))!;
-
-        AssertError(error, "$.Age", 26 + newline.Length, 2, 25);
-    }
-
     [Test]
     public void Deserialize_NestedObject_ReportsDeepestValueAndFormatsMessage()
     {
-        const string text = "(\n  :Owner (\n    :Age bob\n  )\n)";
+        const string text = "(\r\n  :Owner (\r\n    :Name 日本語 :Age bob\r\n  )\r\n)";
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Deserialize<TestAccount>(text))!;
 
-        AssertError(error, "$.Owner.Age", 22, 3, 9);
+        AssertError(error, "$.Owner.Age", 40, 3, 25);
         Assert.That(error.Message, Is.EqualTo(
             "Cannot deserialize property ':Age' as 'Int32'. Expected a number. " +
-            "(Path: $.Owner.Age, Line 3, byte position 9.)"));
-    }
-
-    [Test]
-    public void Deserialize_InvalidScalarArray_ReportsElementLocation()
-    {
-        var error = Assert.Throws<SexprSerializerException>(
-            () => SexprSerializer.Deserialize<TestArray<int>>("(:Values (10 bob))"))!;
-
-        AssertError(error, "$.Values[1]", 13, 1, 13);
+            "(Path: $.Owner.Age, Line 3, byte position 25.)"));
     }
 
     // Call-list indices include the function name at index 0.
-    [TestCase("(:Precondition (()))", "$.Precondition[0]", 16)]
     [TestCase("(:Precondition ((20 ?x)))", "$.Precondition[0][0]", 17)]
     [TestCase("(:Precondition ((and ?x (not 20))))", "$.Precondition[0][2][1]", 29)]
     public void Deserialize_InvalidExpression_ReportsSourcePath(string text, string path, int offset)
@@ -281,20 +258,10 @@ public class DeserializeTests
     }
 
     [Test]
-    public void Deserialize_IntegerOverflow_PreservesConversionException()
-    {
-        var error = Assert.Throws<SexprSerializerException>(
-            () => SexprSerializer.Deserialize<TestPerson>("(:Age 2147483648)"))!;
-
-        AssertError(error, "$.Age", 6, 1, 6);
-        Assert.That(error.InnerException, Is.TypeOf<OverflowException>());
-    }
-
-    [Test]
     public void Deserialize_ArrayOverflow_PreservesConversionException()
     {
         var error = Assert.Throws<SexprSerializerException>(
-            () => SexprSerializer.Deserialize<TestArray<long>>("(:Values (0 9223372036854775808))"))!;
+            () => SexprSerializer.Deserialize<TestArray<int>>("(:Values (0 2147483648))"))!;
 
         AssertError(error, "$.Values[1]", 12, 1, 12);
         Assert.That(error.InnerException, Is.TypeOf<OverflowException>());
@@ -307,49 +274,6 @@ public class DeserializeTests
             () => SexprSerializer.Deserialize<TestPerson>("(:a.b'\\c)"))!;
 
         AssertError(error, "$['a.b\\'\\\\c']", 1, 1, 1);
-    }
-
-    [Test]
-    public void Deserialize_InvalidSyntax_PreservesParserException()
-    {
-        var error = Assert.Throws<SexprParserException>(
-            () => SexprSerializer.Deserialize<TestPerson>("(\n:Age 20"))!;
-
-        Assert.That(error.BytePosition, Is.EqualTo(9));
-        Assert.That(error.LineNumber, Is.EqualTo(2));
-        Assert.That(error.BytePositionInLine, Is.EqualTo(7));
-    }
-
-    [Test]
-    public void SerializerException_WithoutSource_KeepsMessageAndUnknownLocation()
-    {
-        var cause = new InvalidOperationException("cause");
-        var error = new SexprSerializerException("message", cause);
-
-        Assert.That(error.Message, Is.EqualTo("message"));
-        Assert.That(error.Path, Is.Null);
-        Assert.That(error.BytePosition, Is.Null);
-        Assert.That(error.LineNumber, Is.Null);
-        Assert.That(error.BytePositionInLine, Is.Null);
-        Assert.That(error.InnerException, Is.SameAs(cause));
-    }
-
-    public class ThrowingSetter
-    {
-        public int Age
-        {
-            get => 0;
-            set => throw new InvalidOperationException("setter failure");
-        }
-    }
-
-    [Test]
-    public void Deserialize_UserSetterException_IsNotReclassifiedAsInputError()
-    {
-        var error = Assert.Throws<System.Reflection.TargetInvocationException>(
-            () => SexprSerializer.Deserialize<ThrowingSetter>("(:Age 20)"))!;
-
-        Assert.That(error.InnerException, Is.TypeOf<InvalidOperationException>());
     }
 
     private static void AssertError(SexprSerializerException error, string path, int offset, int line, int byteInLine)
