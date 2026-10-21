@@ -69,8 +69,6 @@ public string Name { get; set; } = string.Empty;
 - Unknown keys are ignored, and repeated keys use the last value.
 - `init` and `required` members are not supported.
 
-Non-public members and properties without public getters and setters are ignored.
-
 #### Supported types and arrays
 
 Built-in formatters support `string`, `int`, `long`, `float`, and `double`. User-defined
@@ -86,34 +84,6 @@ var people = SexprSerializer.Deserialize<Person[]>(
 
 Generic models are supported when their concrete types can be collected from another
 model's members.
-
-#### Models in another DLL
-
-A model in another DLL may not have its formatter registered when first deserialized,
-depending on when that DLL is initialized.
-
-To guarantee registration, expose a startup method from the model DLL:
-
-```csharp
-using DotSexpr.Serializer.Resolvers;
-
-public static class ModelSerialization
-{
-    public static void Initialize()
-    {
-        DefaultResolver.Register(
-            DotSexpr.Generated.DotSexprGeneratedResolver.Instance);
-    }
-}
-```
-
-Call it when the application starts:
-
-```csharp
-ModelSerialization.Initialize();
-
-var model = SexprSerializer.Deserialize<ExternalModel>(text);
-```
 
 ### Serialization
 
@@ -139,14 +109,35 @@ additional members.
 
 Null values and non-finite floating-point values are not supported.
 
-#### Depth limit
+During serialization, list nesting is limited to 64 levels by default. Set
+`SexprSerializerOptions.MaxDepth` to a positive value to change this limit.
 
-List nesting is limited to 64 levels by default. Set `SexprSerializerOptions.MaxDepth`
-to a positive value to change it:
+### Models in another DLL
+
+A model in another DLL may not have its formatter registered when first deserialized,
+depending on when that DLL is initialized.
+
+To guarantee registration, expose a startup method from the model DLL:
 
 ```csharp
-var options = new SexprSerializerOptions { MaxDepth = 128 };
-string text = SexprSerializer.Serialize(person, options);
+using DotSexpr.Serializer.Resolvers;
+
+public static class ModelSerialization
+{
+    public static void Initialize()
+    {
+        DefaultResolver.Register(
+            DotSexpr.Generated.DotSexprGeneratedResolver.Instance);
+    }
+}
+```
+
+Call it when the application starts:
+
+```csharp
+ModelSerialization.Initialize();
+
+var model = SexprSerializer.Deserialize<ExternalModel>(text);
 ```
 
 ### Custom formatters
