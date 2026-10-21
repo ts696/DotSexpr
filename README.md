@@ -12,16 +12,6 @@ dotnet add package DotSexpr
 
 The package includes the source generator, which requires Roslyn 4.3 or later.
 
-### Project references
-
-When referencing the source directly, include the generator as an analyzer:
-
-```xml
-<ProjectReference Include="path/to/DotSexpr.csproj" />
-<ProjectReference Include="path/to/DotSexpr.SourceGenerator.csproj"
-                  OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
-```
-
 ## Usage
 
 ### Parsing
@@ -66,7 +56,8 @@ For nested types, the containing types must also be partial.
 
 #### Members and tags
 
-Public writable instance fields and properties with public getters and setters are included.
+Only public writable instance fields and properties with public getters and setters are
+serialized and deserialized.
 Use `[SexprTag]` to change a member's key, for example to `:full-name`:
 
 ```csharp
@@ -78,8 +69,7 @@ public string Name { get; set; } = string.Empty;
 - Unknown keys are ignored, and repeated keys use the last value.
 - `init` and `required` members are not supported.
 
-`[SexprTag]` cannot be applied to non-public members or properties without public getters
-and setters.
+Non-public members and properties without public getters and setters are ignored.
 
 #### Supported types and arrays
 
@@ -96,30 +86,6 @@ var people = SexprSerializer.Deserialize<Person[]>(
 
 Generic models are supported when their concrete types can be collected from another
 model's members.
-
-#### Custom formatters
-
-Register an `ISexprFormatter<T>` with `DefaultResolver`:
-
-```csharp
-using DotSexpr.Serializer.Resolvers;
-
-DefaultResolver.Register<MyType>(new MyTypeFormatter());
-```
-
-To replace an existing formatter, specify a custom resolver through options:
-
-```csharp
-var options = new SexprSerializerOptions
-{
-    Resolver = new CustomResolver()
-};
-
-var person = SexprSerializer.Deserialize<Person>(text, options);
-```
-
-Implement `ISexprFormatterResolver` and return your formatter from `GetFormatter<T>()`.
-Delegate other types to `DefaultResolver.Instance`.
 
 #### Models in another DLL
 
@@ -183,12 +149,69 @@ var options = new SexprSerializerOptions { MaxDepth = 128 };
 string text = SexprSerializer.Serialize(person, options);
 ```
 
-#### Writing a custom formatter
+### Custom formatters
 
-Custom formatters can use `SexprEmitter.BeginList()`, `EndList()`, `WriteString()`,
-`WriteSymbol()`, and `WriteNumber()`.
+Implement `ISexprFormatter<T>` for both serialization and deserialization. For example,
+this formatter represents a `Guid` as a quoted string:
 
-Use these APIs for nested values to apply the configured resolver:
+```csharp
+using System;
+using DotSexpr;
+using DotSexpr.Emitter;
+using DotSexpr.Serializer;
+using DotSexpr.Serializer.Resolvers;
+
+public sealed class GuidFormatter : ISexprFormatter<Guid>
+{
+    public void Serialize(ref SexprEmitter emitter, Guid value, SexprSerializerOptions options)
+    {
+        emitter.WriteString(value.ToString());
+    }
+
+    public Guid Deserialize(in SNode node, SexprSerializerOptions options)
+    {
+        return Guid.Parse(node.GetString());
+    }
+}
+```
+
+Register it with `DefaultResolver` to add support for the type:
+
+```csharp
+DefaultResolver.Register<Guid>(new GuidFormatter());
+
+string text = SexprSerializer.Serialize(Guid.Empty);
+Guid value = SexprSerializer.Deserialize<Guid>(text);
+```
+
+To choose a formatter for individual operations, including overriding an existing formatter,
+specify a custom resolver through options:
+
+```csharp
+var options = new SexprSerializerOptions
+{
+    Resolver = new CustomResolver()
+};
+
+string text = SexprSerializer.Serialize(Guid.Empty, options);
+Guid value = SexprSerializer.Deserialize<Guid>(text, options);
+
+public sealed class CustomResolver : ISexprFormatterResolver
+{
+    private readonly GuidFormatter formatter = new GuidFormatter();
+
+    public ISexprFormatter<T>? GetFormatter<T>()
+    {
+        if (typeof(T) == typeof(Guid))
+        {
+            return (ISexprFormatter<T>)(object)formatter;
+        }
+        return DefaultResolver.Instance.GetFormatter<T>();
+    }
+}
+```
+
+For nested values, use these APIs to apply the configured resolver:
 
 ```csharp
 SexprSerializer.Serialize(ref emitter, child, options);
@@ -197,11 +220,6 @@ SexprSerializer.Deserialize<Child>(in node, options);
 
 When driving an emitter directly, construct it with an `IBufferWriter<byte>` and call
 `Complete()` after writing the root value.
-
-## Roadmap
-
-- Additional collection and scalar formatters
-- Constructor and init-only member deserialization
 
 ## License
 
