@@ -202,16 +202,6 @@ public sealed class CustomResolver : ISexprFormatterResolver
 }
 ```
 
-For nested values, use these APIs to apply the configured resolver:
-
-```csharp
-SexprSerializer.Serialize(ref emitter, child, options);
-SexprSerializer.Deserialize<Child>(in node, options);
-```
-
-When driving an emitter directly, construct it with an `IBufferWriter<byte>` and call
-`Complete()` after writing the root value.
-
 ## License
 
 [MIT](LICENSE)
