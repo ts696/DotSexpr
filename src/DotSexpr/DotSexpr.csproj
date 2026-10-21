@@ -10,7 +10,7 @@
         <Version>0.0.1</Version>
         <PackageId>DotSexpr</PackageId>
         <Authors>ts696</Authors>
-        <Description>An S-expression parser and deserializer for .NET Standard 2.1 and .NET 10.</Description>
+        <Description>An S-expression parser and serializer for .NET Standard 2.1 and .NET 10.</Description>
         <Copyright>Copyright (c) 2026 ts696</Copyright>
         <PackageProjectUrl>https://github.com/ts696/DotSexpr</PackageProjectUrl>
         <RepositoryUrl>https://github.com/ts696/DotSexpr.git</RepositoryUrl>
@@ -21,8 +21,22 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <ProjectReference Include="../DotSexpr.SourceGenerator/DotSexpr.SourceGenerator.csproj"
+                          ReferenceOutputAssembly="false" PrivateAssets="all" />
         <None Include="../../README.md" Pack="true" PackagePath="/" />
         <None Include="../../LICENSE" Pack="true" PackagePath="/" />
     </ItemGroup>
+
+    <Target Name="IncludeSourceGeneratorInPackage" BeforeTargets="_GetPackageFiles">
+        <MSBuild Projects="../DotSexpr.SourceGenerator/DotSexpr.SourceGenerator.csproj"
+                 Targets="GetTargetPath"
+                 Properties="Configuration=$(Configuration);TargetFramework=netstandard2.0">
+            <Output TaskParameter="TargetOutputs" ItemName="SourceGeneratorAssembly" />
+        </MSBuild>
+        <ItemGroup>
+            <None Include="@(SourceGeneratorAssembly)" Pack="true"
+                  PackagePath="analyzers/dotnet/cs" Visible="false" />
+        </ItemGroup>
+    </Target>
 
 </Project>

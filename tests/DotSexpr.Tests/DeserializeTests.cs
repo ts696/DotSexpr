@@ -2,47 +2,53 @@ using DotSexpr.Serializer;
 
 namespace DotSexpr.Tests;
 
-public class DeserializeTests
+public partial class DeserializeTests
 {
-    public class TestPerson
+    [SexprObject]
+    public partial class TestPerson
     {
         public string Name { get; set; }
         public int Age { get; set; }
     }
 
-    public class TestAccount
+    [SexprObject]
+    public partial class TestAccount
     {
         public TestPerson Owner { get; set; }
     }
 
-    public class TestAgent
+    [SexprObject]
+    public partial class TestAgent
     {
         public string Name { get; set; }
         public TestTask[] Tasks { get; set; }
     }
 
-    public class TestTask
+    [SexprObject]
+    public partial class TestTask
     {
         public string Name { get; set; }
 
         public Expression[] Precondition { get; set; }
     }
 
-    public class TestArray<T>
+    [SexprObject]
+    public partial class TestIntArray
     {
-        public T[] Values { get; set; } = [];
+        public int[] Values { get; set; } = [];
+    }
+
+    [SexprObject]
+    public partial class TestStringArray
+    {
+        public string[] Values { get; set; } = [];
     }
 
     [Test]
     public void Deserialize_Properties_ReturnsObject()
     {
         var person = SexprSerializer.Deserialize<TestPerson>(
-            """
-            (
-            :Name bob
-            :Age 20
-            )
-            """);
+            "(:Name bob :Age 20)");
 
         Assert.That(person, Is.Not.Null);
         Assert.That(person.Name, Is.EqualTo("bob"));
@@ -84,7 +90,7 @@ public class DeserializeTests
     [Test]
     public void Deserialize_Int32Array_ReturnsValues()
     {
-        var result = SexprSerializer.Deserialize<TestArray<int>>(
+        var result = SexprSerializer.Deserialize<TestIntArray>(
             "(:Values (10 -20 0))");
 
         Assert.That(result.Values, Is.EqualTo(new[] { 10, -20, 0 }));
@@ -93,7 +99,7 @@ public class DeserializeTests
     [Test]
     public void Deserialize_StringArray_ReturnsValues()
     {
-        var result = SexprSerializer.Deserialize<TestArray<string>>(
+        var result = SexprSerializer.Deserialize<TestStringArray>(
             "(:Values (alice \"Bob Smith\"))");
 
         Assert.That(result.Values, Is.EqualTo(new[] { "alice", "Bob Smith" }));
@@ -261,7 +267,7 @@ public class DeserializeTests
     public void Deserialize_ArrayOverflow_PreservesConversionException()
     {
         var error = Assert.Throws<SexprSerializerException>(
-            () => SexprSerializer.Deserialize<TestArray<int>>("(:Values (0 2147483648))"))!;
+            () => SexprSerializer.Deserialize<TestIntArray>("(:Values (0 2147483648))"))!;
 
         AssertError(error, "$.Values[1]", 12, 1, 12);
         Assert.That(error.InnerException, Is.TypeOf<OverflowException>());
@@ -284,7 +290,8 @@ public class DeserializeTests
         Assert.That(error.BytePositionInLine, Is.EqualTo(byteInLine));
     }
 
-    public struct TestPersonStruct
+    [SexprObject]
+    public partial struct TestPersonStruct
     {
         public int Age { get; set; }
     }
