@@ -33,7 +33,7 @@ public class SexprException : Exception
 
     public override string Message => FormatMessage(null);
 
-    protected string FormatMessage(string? path)
+    protected string FormatMessage(string? path, string? message = null)
     {
         var context = path == null ? null : $"Path: {path}";
         if (LineNumber is { } lineNumber && BytePositionInLine is { } bytePositionInLine)
@@ -42,6 +42,7 @@ public class SexprException : Exception
             context = context == null ? location : $"{context}, {location}";
         }
 
-        return context == null ? base.Message : $"{base.Message} ({context}.)";
+        message ??= base.Message;
+        return context == null ? message : $"{message} ({context}.)";
     }
 }

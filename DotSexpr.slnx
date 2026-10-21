@@ -1,4 +1,6 @@
 <Solution>
   <Project Path="src/DotSexpr/DotSexpr.csproj" />
+  <Project Path="src/DotSexpr.SourceGenerator/DotSexpr.SourceGenerator.csproj" />
   <Project Path="tests/DotSexpr.Tests/DotSexpr.Tests.csproj" />
+  <Project Path="tests/DotSexpr.SourceGenerator.Tests/DotSexpr.SourceGenerator.Tests.csproj" />
 </Solution>

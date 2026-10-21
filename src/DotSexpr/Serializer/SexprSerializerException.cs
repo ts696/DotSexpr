@@ -2,13 +2,16 @@
 using System.Globalization;
 using System.Text;
 
-namespace DotSexpr;
+namespace DotSexpr.Serializer;
 
 public class SexprSerializerException : SexprException
 {
-    // Capture segments from leaf to root only while an input error unwinds.
+    // Error paths are collected from leaf to root.
     private readonly List<object>? _pathSegments;
     private string? _path;
+    private readonly System.Type? _valueType;
+    private readonly string? _expected;
+    private string _targetName = "value";
 
     public SexprSerializerException(string message) : base(message)
     {
@@ -18,25 +21,53 @@ public class SexprSerializerException : SexprException
     {
     }
 
-    internal SexprSerializerException(string message, SNode node, System.Exception? innerException = null)
+    private SexprSerializerException(string message, List<object> pathSegments, System.Exception? innerException)
+        : base(message, innerException)
+    {
+        _pathSegments = pathSegments;
+    }
+
+    internal static SexprSerializerException ForSerialization(string message, System.Exception? innerException = null) =>
+        new(message, new List<object>(), innerException);
+
+    /// <summary>Creates an input error at a node, retaining its location after the document is disposed.</summary>
+    public SexprSerializerException(string message, SNode node, System.Exception? innerException = null)
         : base(message, node.Document.Source.Span, node.Token.Offset, innerException)
     {
         _pathSegments = new List<object>();
     }
 
+    internal SexprSerializerException(SNode node, System.Type valueType, string? expected,
+        System.Exception? innerException = null)
+        : this($"Cannot deserialize value as '{valueType.Name}'.", node, innerException)
+    {
+        _valueType = valueType;
+        _expected = expected;
+    }
+
     /// <summary>Gets the path to the input value, starting at '$', if known.</summary>
     public string? Path => _pathSegments == null ? null : _path ??= BuildPath();
 
-    public override string Message => FormatMessage(Path);
+    public override string Message => FormatMessage(Path, _valueType == null ? null :
+        $"Cannot deserialize {_targetName} as '{_valueType.Name}'." +
+        (_expected == null ? "" : $" Expected {_expected}."));
 
     internal void PrependProperty(string name)
     {
+        if (_pathSegments?.Count == 0)
+        {
+            _targetName = $"property ':{name}'";
+        }
         _pathSegments?.Add(name);
         _path = null;
     }
 
     internal void PrependIndex(int index)
     {
+        if (_pathSegments?.Count == 0)
+        {
+            _targetName = $"array element at index {index}";
+        }
         _pathSegments?.Add(index);
         _path = null;
     }

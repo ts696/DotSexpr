@@ -541,7 +541,7 @@ public class SDocument : IDisposable
         }
     }
 
-    private static bool IsNumber(ReadOnlySpan<byte> bytes)
+    internal static bool IsNumber(ReadOnlySpan<byte> bytes)
     {
         if (bytes.IsEmpty)
         {
@@ -554,7 +554,6 @@ public class SDocument : IDisposable
             return false;
         }
 
-        // Integer part
         if (bytes[index] == '0')
         {
             index++;
@@ -569,7 +568,6 @@ public class SDocument : IDisposable
             index = SkipDigits(bytes, index);
         }
 
-        // Fraction part
         if (index < bytes.Length && bytes[index] == '.')
         {
             var start = ++index;
@@ -580,7 +578,6 @@ public class SDocument : IDisposable
             }
         }
 
-        // Exponent part
         if (index < bytes.Length && (bytes[index] == 'e' || bytes[index] == 'E'))
         {
             index++;

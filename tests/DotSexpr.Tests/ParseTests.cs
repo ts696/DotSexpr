@@ -317,25 +317,6 @@ public class ParseTests
         Assert.That(root[5].GetSymbol(), Is.EqualTo("123abc"));
     }
 
-    [TestCase("(user")]
-    [TestCase("user)")]
-    [TestCase("user 100")]
-    [TestCase("\"Alice")]
-    [TestCase("\"abc\\")]
-    [TestCase("() ()")]
-    [TestCase("() user")]
-    [TestCase("user ()")]
-    [TestCase("")]
-    public void Parse_InvalidSyntax_ThrowsParserException(string text)
-    {
-        Assert.That(
-            () =>
-            {
-                using var document = SDocument.Parse(text);
-            },
-            Throws.InstanceOf<SexprParserException>());
-    }
-
     [TestCase(")", 0, 1, 0)]
     [TestCase("user)", 4, 1, 4)]
     [TestCase("\n)", 1, 2, 0)]
@@ -356,6 +337,8 @@ public class ParseTests
     [TestCase("\r\n\t ", 4, 2, 2)]
     [TestCase("user 100", 5, 1, 5)]
     [TestCase("() ()", 3, 1, 3)]
+    [TestCase("() user", 3, 1, 3)]
+    [TestCase("user ()", 5, 1, 5)]
     [TestCase("() \"Alice\"", 3, 1, 3)]
     [TestCase("日本語\nnext", 10, 2, 0)]
     [TestCase("\"😀\"\r\nnext", 8, 2, 0)]

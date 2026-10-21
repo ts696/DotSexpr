@@ -21,6 +21,8 @@
     </ItemGroup>
 
     <ItemGroup>
+        <ProjectReference Include="..\..\src\DotSexpr.SourceGenerator\DotSexpr.SourceGenerator.csproj"
+                          OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
         <ProjectReference Include="..\..\src\DotSexpr\DotSexpr.csproj">
             <!-- Run the same tests against another library target with -p:DotSexprTargetFramework=netstandard2.1. -->
             <SetTargetFramework Condition="'$(DotSexprTargetFramework)' != ''">TargetFramework=$(DotSexprTargetFramework)</SetTargetFramework>

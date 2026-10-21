@@ -32,12 +32,20 @@ jobs:
       - name: Test netstandard2.1
         run: dotnet test tests/DotSexpr.Tests/DotSexpr.Tests.csproj -c Release --no-restore -p:DotSexprTargetFramework=netstandard2.1
 
+      - name: Test source generator
+        run: dotnet test tests/DotSexpr.SourceGenerator.Tests/DotSexpr.SourceGenerator.Tests.csproj -c Release --no-build --no-restore
+
       - name: Pack
-        run: dotnet pack src/DotSexpr/DotSexpr.csproj -c Release --no-build --no-restore
+        run: dotnet pack src/DotSexpr/DotSexpr.csproj -c Release --no-build --no-restore --output packages
+
+      - name: Test NuGet package
+        run: |
+          dotnet restore tests/DotSexpr.PackageTests/DotSexpr.PackageTests.csproj --source ./packages --packages "${{ runner.temp }}/dotsexpr-packages"
+          dotnet run --project tests/DotSexpr.PackageTests/DotSexpr.PackageTests.csproj -c Release --no-restore
 
       - name: Upload NuGet package
         uses: actions/upload-artifact@v7.0.2
         with:
           name: nuget
-          path: src/DotSexpr/bin/Release/*.nupkg
+          path: packages/*.nupkg
           if-no-files-found: error
