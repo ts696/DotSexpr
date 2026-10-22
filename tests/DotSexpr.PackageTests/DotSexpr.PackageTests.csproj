@@ -7,7 +7,13 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="DotSexpr" Version="0.0.1" />
+  <!-- CI sets UseNuGetPackage=true to validate the packed artifacts instead of project outputs. -->
+  <ItemGroup Condition="'$(UseNuGetPackage)' == 'true'">
+    <PackageReference Include="DotSexpr" Version="0.0.2" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseNuGetPackage)' != 'true'">
+    <ProjectReference Include="../../src/DotSexpr/DotSexpr.csproj" />
+    <ProjectReference Include="../../src/DotSexpr.SourceGenerator/DotSexpr.SourceGenerator.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

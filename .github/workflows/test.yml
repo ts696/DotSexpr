@@ -40,8 +40,8 @@ jobs:
 
       - name: Test NuGet package
         run: |
-          dotnet restore tests/DotSexpr.PackageTests/DotSexpr.PackageTests.csproj --source ./packages --packages "${{ runner.temp }}/dotsexpr-packages"
-          dotnet run --project tests/DotSexpr.PackageTests/DotSexpr.PackageTests.csproj -c Release --no-restore
+          dotnet restore tests/DotSexpr.PackageTests/DotSexpr.PackageTests.csproj -p:UseNuGetPackage=true --source ./packages --packages "${{ runner.temp }}/dotsexpr-packages"
+          dotnet run --project tests/DotSexpr.PackageTests/DotSexpr.PackageTests.csproj -c Release --no-restore -p:UseNuGetPackage=true
 
       - name: Upload NuGet package
         uses: actions/upload-artifact@v7.0.2
