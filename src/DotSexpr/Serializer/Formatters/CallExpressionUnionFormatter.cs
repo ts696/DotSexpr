@@ -32,6 +32,13 @@ public class CallExpressionUnionFormatter<T> : ISexprFormatter<T> where T : Call
         {
             if (value.GetType() == _fallbackType)
             {
+                if (value.Name != null && _names.ContainsKey(value.Name))
+                {
+                    var error = SexprSerializerException.ForSerialization(
+                        $"UnknownCall cannot use registered call name '{value.Name}' for '{typeof(T)}'.");
+                    error.PrependIndex(0);
+                    throw error;
+                }
                 new ExpressionFormatter().Serialize(ref emitter, value, options);
                 return;
             }

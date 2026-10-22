@@ -221,6 +221,9 @@ through the union, and in arrays. `AllowUnknownCalls` defaults to `false`; it pe
 unknown names, while malformed call lists still produce located errors. The nested name
 `UnknownCall` is reserved when this feature is enabled.
 
+When serialized through the union, an `UnknownCall` must use an unregistered name.
+Registered names must use their dedicated call types, at the root and in arguments.
+
 Names are case-sensitive and read-only, including on ordinary `CallExpression` values.
 Arguments remain expressions and may contain calls with other names. Deserializing as
 `Expression` or `CallExpression` produces an ordinary call; request `Move` to validate

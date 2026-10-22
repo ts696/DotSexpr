@@ -96,4 +96,51 @@ public partial class ArgumentCountTests
         Assert.That(error.Path, Is.EqualTo("$[0]"));
         Assert.That(error.Message, Does.Contain("Expected call name 'not'"));
     }
+
+    [TestCase("not", 0)]
+    [TestCase("not", 1)]
+    [TestCase("and", 0)]
+    [TestCase("zero", 0)]
+    public void UnknownCall_CannotSerializeRegisteredNameAsUnionRoot(string name, int count)
+    {
+        Condition condition = new Condition.UnknownCall(name,
+            Enumerable.Repeat<Expression>(new SymbolExpression("x"), count).ToArray());
+        var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Serialize(condition))!;
+        Assert.That(error.Path, Is.EqualTo("$[0]"));
+        Assert.That(error.BytePosition, Is.Null);
+        Assert.That(error.Message, Does.Contain($"'{name}'").And.Contain("registered").And.Contain("UnknownCall"));
+    }
+
+    [TestCase("not", 0)]
+    [TestCase("not", 1)]
+    [TestCase("and", 0)]
+    [TestCase("zero", 0)]
+    public void UnknownCall_CannotSerializeRegisteredNameInsideUnion(string name, int count)
+    {
+        var unknown = new Condition.UnknownCall(name,
+            Enumerable.Repeat<Expression>(new SymbolExpression("x"), count).ToArray());
+        var task = new Task { Precondition = new And([unknown]) };
+        var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Serialize(task))!;
+        Assert.That(error.Path, Is.EqualTo("$.precondition[1][0]"));
+        Assert.That(error.Message, Does.Contain($"'{name}'").And.Contain("UnknownCall"));
+
+        task.Precondition = new Condition.UnknownCall("custom", [unknown]);
+        error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Serialize(task))!;
+        Assert.That(error.Path, Is.EqualTo("$.precondition[1][0]"));
+    }
+
+    [TestCase("ready")]
+    [TestCase("Not")]
+    public void UnknownCall_UnregisteredNamesStillRoundTripAtRootAndInsideUnion(string name)
+    {
+        Condition condition = new Condition.UnknownCall(name, []);
+        var text = SexprSerializer.Serialize(condition);
+        Assert.That(text, Is.EqualTo($"({name})"));
+        var read = SexprSerializer.Deserialize<Condition>(text);
+        Assert.That(read, Is.TypeOf<Condition.UnknownCall>());
+        Assert.That(read.Name, Is.EqualTo(name));
+        var task = new Task { Precondition = new And([condition]) };
+        text = SexprSerializer.Serialize(task);
+        Assert.That(SexprSerializer.Serialize(SexprSerializer.Deserialize<Task>(text)), Is.EqualTo(text));
+    }
 }
