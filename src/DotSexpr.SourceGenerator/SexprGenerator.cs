@@ -95,6 +95,7 @@ public sealed class SexprGenerator : IIncrementalGenerator
         }
         var callAttribute = type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == CallAttribute);
         var callName = callAttribute?.ConstructorArguments.FirstOrDefault().Value as string;
+        var argumentCount = callAttribute?.NamedArguments.FirstOrDefault(a => a.Key == "ArgumentCount").Value.Value as int? ?? -1;
         var unionCases = new List<(INamedTypeSymbol Type, string Name)>();
         if (unionAttribute != null)
         {
@@ -148,6 +149,11 @@ public sealed class SexprGenerator : IIncrementalGenerator
             if (!IsCallName(callName))
             {
                 Report(output, InvalidCall, type, type.Name, "the name must be a valid, non-numeric symbol");
+                return null;
+            }
+            if (argumentCount < -1)
+            {
+                Report(output, InvalidCall, type, type.Name, "ArgumentCount must be -1 (unconstrained) or a non-negative integer");
                 return null;
             }
         }
@@ -229,7 +235,12 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 .Append(" : global::DotSexpr.Serializer.Formatters.CallExpressionFormatter<").Append(fullName).AppendLine("> {")
                 .Append("public ").Append(formatterName).Append("() : base(")
                 .Append(SymbolDisplay.FormatLiteral(callName!, true)).Append(", arguments => new ")
-                .Append(fullName).AppendLine("(arguments)) { }\n}");
+                .Append(fullName).Append("(arguments)) {");
+            if (argumentCount >= 0)
+            {
+                code.Append("ArgumentCount = ").Append(argumentCount).AppendLine(";");
+            }
+            code.AppendLine("}\n}");
         }
         else
         {

@@ -8,6 +8,9 @@ namespace DotSexpr.Serializer.Formatters;
 public class CallExpressionFormatter<T>(string name, Func<IReadOnlyList<Expression>, T> create)
     : ISexprFormatter<T> where T : CallExpression
 {
+    /// <summary>Exact argument count, or -1 for an unconstrained call.</summary>
+    protected int ArgumentCount { get; set; } = -1;
+
     public void Serialize(ref SexprEmitter emitter, T value, SexprSerializerOptions options)
     {
         if (!string.Equals(value.Name, name, StringComparison.Ordinal))
@@ -16,12 +19,17 @@ public class CallExpressionFormatter<T>(string name, Func<IReadOnlyList<Expressi
             error.PrependIndex(0);
             throw error;
         }
+        if (ArgumentCount >= 0 && value.Arguments != null && value.Arguments.Count != ArgumentCount)
+        {
+            throw SexprSerializerException.ForSerialization(
+                $"Call '{name}' requires exactly {ArgumentCount} argument(s), but found {value.Arguments.Count}.");
+        }
         new ExpressionFormatter().Serialize(ref emitter, value, options);
     }
 
     public T Deserialize(in SNode node, SexprSerializerOptions options)
     {
-        var call = ExpressionFormatter.DeserializeCall(in node, options, name);
+        var call = ExpressionFormatter.DeserializeCall(in node, options, name, ArgumentCount);
         return create(call.Arguments);
     }
 }

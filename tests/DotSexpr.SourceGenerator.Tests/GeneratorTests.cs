@@ -132,6 +132,29 @@ public class GeneratorTests
         Assert.That(result.GeneratedCount, Is.EqualTo(2));
     }
 
+    [TestCase(-1)]
+    [TestCase(0)]
+    [TestCase(1)]
+    [TestCase(int.MaxValue)]
+    public void Generate_ArgumentCount_CompilesWithCSharp9(int count)
+    {
+        var source = $"[SexprCall(\"not\", ArgumentCount = {count})] public sealed partial record Not : CallExpression;";
+        var result = Generate(source, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(result.GeneratorDiagnostics, Is.Empty);
+        Assert.That(result.CompilerErrors, Is.Empty);
+        Assert.That(result.GeneratedCount, Is.EqualTo(2));
+    }
+
+    [TestCase(-2)]
+    [TestCase(int.MinValue)]
+    public void Generate_InvalidArgumentCount_ReportsDiagnostic(int count)
+    {
+        var result = Generate($"[SexprCall(\"not\", ArgumentCount = {count})] public partial record Not : CallExpression;");
+        Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Is.EqualTo(new[] { "DSX007" }));
+        Assert.That(result.GeneratorDiagnostics[0].GetMessage(), Does.Contain("ArgumentCount"));
+        Assert.That(result.GeneratedCount, Is.Zero);
+    }
+
     [Test]
     public void Generate_CallName_CannotBeOverriddenWithInitializerOrWithExpression()
     {
@@ -369,7 +392,7 @@ public class GeneratorTests
         var model = Generate($$"""
             [SexprCallUnion(typeof(InternalMove), AllowUnknownCalls = {{(allowUnknownCalls ? "true" : "false")}})]
             public abstract partial record ExternalAction : CallExpression;
-            [SexprCall("move")] internal sealed partial record InternalMove : ExternalAction;
+            [SexprCall("move", ArgumentCount = 1)] internal sealed partial record InternalMove : ExternalAction;
             """, language: LanguageVersion.CSharp9, warningsAsErrors: true);
         Assert.That(model.GeneratorDiagnostics, Is.Empty);
         Assert.That(model.CompilerErrors, Is.Empty);
@@ -409,6 +432,11 @@ public class GeneratorTests
         var input = $"(:Action (move (move 3)) :Actions {actions})";
         var output = assembly.GetType("Probe")!.GetMethod("Run")!.Invoke(null, new object[] { input });
         Assert.That(output, Is.EqualTo(input));
+        var error = Assert.Throws<System.Reflection.TargetInvocationException>(() =>
+            assembly.GetType("Probe")!.GetMethod("Run")!.Invoke(null, new object[] { "(:Action (move) :Actions ())" }))!;
+        Assert.That(error.InnerException, Is.TypeOf<SexprSerializerException>());
+        Assert.That(((SexprSerializerException)error.InnerException!).Path, Is.EqualTo("$.Action"));
+        Assert.That(error.InnerException!.Message, Does.Contain("requires exactly 1 argument(s)"));
     }
 
     [Test]

@@ -124,6 +124,20 @@ registered through the generated resolver. Typed calls also work in arrays and a
 `[SexprObject]` members. Containing types must be partial; explicit constructors and
 additional instance fields/properties are not supported on `[SexprCall]` records.
 
+Use `ArgumentCount` to require an exact number of arguments, excluding the call name:
+
+```csharp
+[SexprCall("not", ArgumentCount = 1)]
+public sealed partial record Not : CallExpression;
+```
+
+`(not (ready ?actor))` is valid; `(not)` and `(not a b)` are rejected. The generated
+formatter checks the count during serialization and deserialization, including when
+used through a union or in a model property, and reports the path to the invalid call.
+The default is `-1` (unconstrained), while `0` requires no arguments. Values below `-1`
+produce a generator diagnostic. Constructed values are checked when serialized, including
+values whose arguments have been changed with `with`.
+
 To allow several calls in the same position, register them on a common abstract record:
 
 ```csharp
@@ -188,7 +202,7 @@ public abstract partial record ConditionExpression : CallExpression;
 public sealed partial record And : ConditionExpression;
 [SexprCall("or")]
 public sealed partial record Or : ConditionExpression;
-[SexprCall("not")]
+[SexprCall("not", ArgumentCount = 1)]
 public sealed partial record Not : ConditionExpression;
 
 [SexprObject]

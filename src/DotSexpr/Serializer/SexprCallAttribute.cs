@@ -7,4 +7,7 @@ namespace DotSexpr.Serializer;
 public sealed class SexprCallAttribute(string name) : Attribute
 {
     public string Name { get; } = name;
+
+    /// <summary>Exact argument count, excluding the call name. -1 (the default) allows any count.</summary>
+    public int ArgumentCount { get; set; } = -1;
 }
