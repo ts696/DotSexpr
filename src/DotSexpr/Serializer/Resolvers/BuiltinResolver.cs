@@ -38,6 +38,22 @@ public class BuiltinResolver : ISexprFormatterResolver
             {
                 formatter = new ExpressionFormatter();
             }
+            else if (type == typeof(IntegerExpression))
+            {
+                formatter = new ExpressionSubtypeFormatter<IntegerExpression>();
+            }
+            else if (type == typeof(NumberExpression))
+            {
+                formatter = new ExpressionSubtypeFormatter<NumberExpression>();
+            }
+            else if (type == typeof(SymbolExpression))
+            {
+                formatter = new ExpressionSubtypeFormatter<SymbolExpression>();
+            }
+            else if (type == typeof(CallExpression))
+            {
+                formatter = new ExpressionSubtypeFormatter<CallExpression>();
+            }
             else if (type == typeof(string[]))
             {
                 formatter = new ArrayFormatter<string>();
@@ -61,6 +77,22 @@ public class BuiltinResolver : ISexprFormatterResolver
             else if (type == typeof(Expression[]))
             {
                 formatter = new ArrayFormatter<Expression>();
+            }
+            else if (type == typeof(IntegerExpression[]))
+            {
+                formatter = new ArrayFormatter<IntegerExpression>();
+            }
+            else if (type == typeof(NumberExpression[]))
+            {
+                formatter = new ArrayFormatter<NumberExpression>();
+            }
+            else if (type == typeof(SymbolExpression[]))
+            {
+                formatter = new ArrayFormatter<SymbolExpression>();
+            }
+            else if (type == typeof(CallExpression[]))
+            {
+                formatter = new ArrayFormatter<CallExpression>();
             }
             return (ISexprFormatter<T>?)formatter;
         }
