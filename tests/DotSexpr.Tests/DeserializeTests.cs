@@ -255,7 +255,7 @@ public partial class DeserializeTests
 
     // Call-list indices include the function name at index 0.
     [TestCase("(:Precondition ((20 ?x)))", "$.Precondition[0][0]", 17)]
-    [TestCase("(:Precondition ((and ?x (not 20))))", "$.Precondition[0][2][1]", 29)]
+    [TestCase("(:Precondition ((and ?x (not \"bad\"))))", "$.Precondition[0][2][1]", 29)]
     public void Deserialize_InvalidExpression_ReportsSourcePath(string text, string path, int offset)
     {
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Deserialize<TestTask>(text))!;

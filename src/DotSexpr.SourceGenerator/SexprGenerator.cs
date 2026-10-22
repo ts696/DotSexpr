@@ -13,6 +13,8 @@ namespace DotSexpr.SourceGenerator;
 public sealed class SexprGenerator : IIncrementalGenerator
 {
     private const string ObjectAttribute = "DotSexpr.Serializer.SexprObjectAttribute";
+    private const string CallAttribute = "DotSexpr.Serializer.SexprCallAttribute";
+    private const string CallUnionAttribute = "DotSexpr.Serializer.SexprCallUnionAttribute";
     private const string TagAttribute = "DotSexpr.Serializer.SexprTagAttribute";
     private static readonly SymbolDisplayFormat NullableTypeFormat = SymbolDisplayFormat.FullyQualifiedFormat
         .WithMiscellaneousOptions(SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions |
@@ -30,19 +32,32 @@ public sealed class SexprGenerator : IIncrementalGenerator
         "Invalid or duplicate property tag", "Tag '{0}' on member '{1}' must be a unique, non-empty property name without ':' or delimiters");
     private static readonly DiagnosticDescriptor InvalidResolverType = Descriptor("DSX006",
         "Unsupported resolver dependency", "Cannot generate a resolver entry for '{0}': {1}");
+    private static readonly DiagnosticDescriptor InvalidCall = Descriptor("DSX007",
+        "Unsupported call declaration", "Cannot generate call '{0}': {1}");
+    private static readonly DiagnosticDescriptor InvalidCallUnion = Descriptor("DSX008",
+        "Unsupported call union", "Cannot generate call union '{0}': {1}");
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var types = context.SyntaxProvider.ForAttributeWithMetadataName(ObjectAttribute,
             static (node, _) => node is TypeDeclarationSyntax,
             static (attributeContext, _) => attributeContext);
-        context.RegisterSourceOutput(types.Collect().Combine(context.CompilationProvider), static (output, input) =>
+        var calls = context.SyntaxProvider.ForAttributeWithMetadataName(CallAttribute,
+            static (node, _) => node is TypeDeclarationSyntax,
+            static (attributeContext, _) => attributeContext);
+        var unions = context.SyntaxProvider.ForAttributeWithMetadataName(CallUnionAttribute,
+            static (node, _) => node is TypeDeclarationSyntax,
+            static (attributeContext, _) => attributeContext);
+        var declarations = types.Collect().Combine(calls.Collect()).Combine(unions.Collect())
+            .Select(static (input, _) => input.Left.Left.Concat(input.Left.Right).Concat(input.Right).ToArray());
+        context.RegisterSourceOutput(declarations.Combine(context.CompilationProvider), static (output, input) =>
         {
             var models = new Dictionary<INamedTypeSymbol, List<(ISymbol Symbol, ITypeSymbol Type, string Tag)>>(SymbolEqualityComparer.Default);
+            var processed = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
             foreach (var attributeContext in input.Left)
             {
                 var type = (INamedTypeSymbol)attributeContext.TargetSymbol;
-                if (models.ContainsKey(type))
+                if (!processed.Add(type))
                 {
                     continue;
                 }
@@ -58,6 +73,8 @@ public sealed class SexprGenerator : IIncrementalGenerator
 
     private static List<(ISymbol Symbol, ITypeSymbol Type, string Tag)>? Generate(SourceProductionContext output, INamedTypeSymbol type)
     {
+        var unionAttribute = type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == CallUnionAttribute);
+        var allowUnknownCalls = unionAttribute?.NamedArguments.Any(a => a.Key == "AllowUnknownCalls" && a.Value.Value is true) == true;
         var scopes = new Stack<INamedTypeSymbol>();
         for (var scope = type; scope != null; scope = scope.ContainingType)
         {
@@ -69,20 +86,85 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 return null;
             }
         }
-        if (type.IsAbstract || type.IsStatic || type.IsRefLikeType ||
+        if ((type.IsAbstract && unionAttribute == null) || type.IsStatic || type.IsRefLikeType ||
             scopes.Any(s => s.DeclaringSyntaxReferences.Any(r =>
                 r.GetSyntax() is TypeDeclarationSyntax d && d.Modifiers.Any(m => m.ValueText == "file"))))
         {
             Report(output, InvalidType, type, type.Name);
             return null;
         }
-        if (!type.IsValueType && !type.InstanceConstructors.Any(c => c.Parameters.Length == 0))
+        var callAttribute = type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == CallAttribute);
+        var callName = callAttribute?.ConstructorArguments.FirstOrDefault().Value as string;
+        var argumentCount = callAttribute?.NamedArguments.FirstOrDefault(a => a.Key == "ArgumentCount").Value.Value as int? ?? -1;
+        var unionCases = new List<(INamedTypeSymbol Type, string Name)>();
+        if (unionAttribute != null)
+        {
+            if (!type.IsRecord || type.IsValueType || !type.IsAbstract || HasGenericScope(type) ||
+                type.BaseType?.ToDisplayString() != "DotSexpr.Serializer.CallExpression" ||
+                callAttribute != null || type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == ObjectAttribute) ||
+                HasCallMembersOrConstructors(type))
+            {
+                Report(output, InvalidCallUnion, type, type.Name,
+                    "use an abstract, non-generic partial record directly derived from CallExpression, without other serialization attributes, constructors or instance fields/properties");
+                return null;
+            }
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var caseType in GetUnionTypes(type))
+            {
+                var caseName = caseType?.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == CallAttribute)
+                    ?.ConstructorArguments.FirstOrDefault().Value as string;
+                if (caseType == null || caseType.IsAbstract || caseType.IsUnboundGenericType ||
+                    !SymbolEqualityComparer.Default.Equals(caseType.BaseType, type) || !IsCallName(caseName) ||
+                    !names.Add(caseName!))
+                {
+                    Report(output, InvalidCallUnion, type, type.Name,
+                        "each registered type must directly derive from the union and have a distinct, valid SexprCall name");
+                    return null;
+                }
+                unionCases.Add((caseType, caseName!));
+            }
+            if (unionCases.Count == 0)
+            {
+                Report(output, InvalidCallUnion, type, type.Name, "register at least one SexprCall type");
+                return null;
+            }
+            if (allowUnknownCalls && (type.Name == "UnknownCall" || type.GetMembers("UnknownCall").Length != 0))
+            {
+                Report(output, InvalidCallUnion, type, type.Name, "the generated name UnknownCall is reserved when AllowUnknownCalls is true");
+                return null;
+            }
+        }
+        else if (callAttribute != null)
+        {
+            if (!type.IsRecord || type.IsValueType ||
+                (type.BaseType?.ToDisplayString() != "DotSexpr.Serializer.CallExpression" &&
+                    type.BaseType?.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == CallUnionAttribute) != true) ||
+                type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == ObjectAttribute) ||
+                HasCallMembersOrConstructors(type))
+            {
+                Report(output, InvalidCall, type, type.Name,
+                    "use a partial record derived from CallExpression or a SexprCallUnion, without SexprObject, constructors or instance fields/properties");
+                return null;
+            }
+            if (!IsCallName(callName))
+            {
+                Report(output, InvalidCall, type, type.Name, "the name must be a valid, non-numeric symbol");
+                return null;
+            }
+            if (argumentCount < -1)
+            {
+                Report(output, InvalidCall, type, type.Name, "ArgumentCount must be -1 (unconstrained) or a non-negative integer");
+                return null;
+            }
+        }
+        else if (!type.IsValueType && !type.InstanceConstructors.Any(c => c.Parameters.Length == 0))
         {
             Report(output, ConstructorRequired, type, type.Name);
             return null;
         }
 
-        var members = GetObjectMembers(output, type);
+        var members = callAttribute != null || unionAttribute != null
+            ? new List<(ISymbol Symbol, ITypeSymbol Type, string Tag)>() : GetObjectMembers(output, type);
         if (members == null)
         {
             return null;
@@ -109,41 +191,95 @@ public sealed class SexprGenerator : IIncrementalGenerator
 
         var fullName = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         var formatterName = "@" + type.Name + "GeneratedFormatter";
-        code.Append("public sealed class ").Append(formatterName).Append(" : global::DotSexpr.Serializer.ISexprFormatter<")
-            .Append(fullName).AppendLine("> {");
-        for (var i = 0; i < members.Count; i++)
+        if (unionAttribute != null)
         {
-            code.Append("private static readonly byte[] Key").Append(i)
-                .Append(" = new byte[] { ").Append(string.Join(", ", Encoding.UTF8.GetBytes(":" + members[i].Tag)))
-                .AppendLine(" };");
+            code.Append("protected @").Append(type.Name)
+                .AppendLine("(string name, global::System.Collections.Generic.IReadOnlyList<global::DotSexpr.Serializer.Expression> arguments) : base(name, arguments) { }");
+            if (allowUnknownCalls)
+            {
+                code.Append("public sealed record UnknownCall : ").Append(fullName).AppendLine(" {")
+                    .AppendLine("public UnknownCall(string name, global::System.Collections.Generic.IReadOnlyList<global::DotSexpr.Serializer.Expression> arguments) : base(name, arguments) { }")
+                    .Append("public sealed class UnknownCallGeneratedFormatter : global::DotSexpr.Serializer.ISexprFormatter<")
+                    .Append(fullName).AppendLine(".UnknownCall> {")
+                    .Append("public ").Append(fullName).AppendLine(".UnknownCall Deserialize(in global::DotSexpr.SNode node, global::DotSexpr.Serializer.SexprSerializerOptions options) {")
+                    .AppendLine("var call = global::DotSexpr.Serializer.SexprSerializer.Deserialize<global::DotSexpr.Serializer.CallExpression>(in node, options);")
+                    .Append("return new ").Append(fullName).AppendLine(".UnknownCall(call.Name, call.Arguments);\n}")
+                    .Append("public void Serialize(ref global::DotSexpr.Emitter.SexprEmitter emitter, ").Append(fullName)
+                    .AppendLine(".UnknownCall value, global::DotSexpr.Serializer.SexprSerializerOptions options) {")
+                    .AppendLine("new global::DotSexpr.Serializer.Formatters.ExpressionFormatter().Serialize(ref emitter, value, options);\n}\n}\n}");
+            }
+            code.Append("public sealed class ").Append(formatterName)
+                .Append(" : global::DotSexpr.Serializer.Formatters.CallExpressionUnionFormatter<").Append(fullName).AppendLine("> {")
+                .Append("public ").Append(formatterName).AppendLine("() {");
+            foreach (var unionCase in unionCases)
+            {
+                code.Append("Register<").Append(unionCase.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+                    .Append(">(").Append(SymbolDisplay.FormatLiteral(unionCase.Name, true)).Append(", new ")
+                    .Append(unionCase.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+                    .Append(".@").Append(unionCase.Type.Name).AppendLine("GeneratedFormatter());");
+            }
+            if (allowUnknownCalls)
+            {
+                code.Append("RegisterFallback<").Append(fullName).Append(".UnknownCall>((name, arguments) => new ")
+                    .Append(fullName).AppendLine(".UnknownCall(name, arguments));");
+            }
+            code.AppendLine("}\n}");
         }
-        code.Append("public void Serialize(ref global::DotSexpr.Emitter.SexprEmitter emitter, ").Append(fullName)
-            .AppendLine(" value, global::DotSexpr.Serializer.SexprSerializerOptions options) {")
-            .AppendLine("emitter.BeginList();");
-        for (var i = 0; i < members.Count; i++)
+        else if (callAttribute != null)
         {
-            var member = members[i];
-            code.Append("emitter.WriteSymbol(Key").Append(i).AppendLine(");")
-                .Append("global::DotSexpr.Serializer.SexprSerializer.SerializeProperty<")
-                .Append(member.Type.ToDisplayString(NullableTypeFormat))
-                .Append(">(ref emitter, value.@").Append(member.Symbol.Name).Append(", options, ")
-                .Append(SymbolDisplay.FormatLiteral(member.Tag, true)).AppendLine(");");
+            code.Append("public @").Append(type.Name).AppendLine("() : this(global::System.Array.Empty<global::DotSexpr.Serializer.Expression>()) { }")
+                .Append("public @").Append(type.Name)
+                .Append("(global::System.Collections.Generic.IReadOnlyList<global::DotSexpr.Serializer.Expression> arguments) : base(")
+                .Append(SymbolDisplay.FormatLiteral(callName!, true)).AppendLine(", arguments) { }")
+                .Append("public sealed class ").Append(formatterName)
+                .Append(" : global::DotSexpr.Serializer.Formatters.CallExpressionFormatter<").Append(fullName).AppendLine("> {")
+                .Append("public ").Append(formatterName).Append("() : base(")
+                .Append(SymbolDisplay.FormatLiteral(callName!, true)).Append(", arguments => new ")
+                .Append(fullName).Append("(arguments)) {");
+            if (argumentCount >= 0)
+            {
+                code.Append("ArgumentCount = ").Append(argumentCount).AppendLine(";");
+            }
+            code.AppendLine("}\n}");
         }
-        code.AppendLine("emitter.EndList();\n}");
-        code.Append("public ").Append(fullName)
-            .AppendLine(" Deserialize(in global::DotSexpr.SNode node, global::DotSexpr.Serializer.SexprSerializerOptions options) {")
-            .AppendLine("var reader = new global::DotSexpr.Serializer.SexprObjectReader(in node);")
-            .Append("var result = new ").Append(fullName).AppendLine("();")
-            .AppendLine("while (reader.MoveNext(out var key, out var value)) {");
-        for (var i = 0; i < members.Count; i++)
+        else
         {
-            var member = members[i];
-            code.Append(i == 0 ? "if" : "else if").Append(" (key.ValueEquals(Key").Append(i).AppendLine(")) {")
-                .Append("result.@").Append(member.Symbol.Name).Append(" = global::DotSexpr.Serializer.SexprSerializer.DeserializeProperty<")
-                .Append(member.Type.ToDisplayString(NullableTypeFormat)).Append(">(in value, options, ")
-                .Append(SymbolDisplay.FormatLiteral(member.Tag, true)).AppendLine(");\n}");
+            code.Append("public sealed class ").Append(formatterName).Append(" : global::DotSexpr.Serializer.ISexprFormatter<")
+                .Append(fullName).AppendLine("> {");
+            for (var i = 0; i < members.Count; i++)
+            {
+                code.Append("private static readonly byte[] Key").Append(i)
+                    .Append(" = new byte[] { ").Append(string.Join(", ", Encoding.UTF8.GetBytes(":" + members[i].Tag)))
+                    .AppendLine(" };");
+            }
+            code.Append("public void Serialize(ref global::DotSexpr.Emitter.SexprEmitter emitter, ").Append(fullName)
+                .AppendLine(" value, global::DotSexpr.Serializer.SexprSerializerOptions options) {")
+                .AppendLine("emitter.BeginList();");
+            for (var i = 0; i < members.Count; i++)
+            {
+                var member = members[i];
+                code.Append("emitter.WriteSymbol(Key").Append(i).AppendLine(");")
+                    .Append("global::DotSexpr.Serializer.SexprSerializer.SerializeProperty<")
+                    .Append(member.Type.ToDisplayString(NullableTypeFormat))
+                    .Append(">(ref emitter, value.@").Append(member.Symbol.Name).Append(", options, ")
+                    .Append(SymbolDisplay.FormatLiteral(member.Tag, true)).AppendLine(");");
+            }
+            code.AppendLine("emitter.EndList();\n}");
+            code.Append("public ").Append(fullName)
+                .AppendLine(" Deserialize(in global::DotSexpr.SNode node, global::DotSexpr.Serializer.SexprSerializerOptions options) {")
+                .AppendLine("var reader = new global::DotSexpr.Serializer.SexprObjectReader(in node);")
+                .Append("var result = new ").Append(fullName).AppendLine("();")
+                .AppendLine("while (reader.MoveNext(out var key, out var value)) {");
+            for (var i = 0; i < members.Count; i++)
+            {
+                var member = members[i];
+                code.Append(i == 0 ? "if" : "else if").Append(" (key.ValueEquals(Key").Append(i).AppendLine(")) {")
+                    .Append("result.@").Append(member.Symbol.Name).Append(" = global::DotSexpr.Serializer.SexprSerializer.DeserializeProperty<")
+                    .Append(member.Type.ToDisplayString(NullableTypeFormat)).Append(">(in value, options, ")
+                    .Append(SymbolDisplay.FormatLiteral(member.Tag, true)).AppendLine(");\n}");
+            }
+            code.AppendLine("}\nreturn result;\n}\n}");
         }
-        code.AppendLine("}\nreturn result;\n}\n}");
         foreach (var _ in scopes) code.AppendLine("}");
         if (!type.ContainingNamespace.IsGlobalNamespace)
         {
@@ -171,7 +307,7 @@ public sealed class SexprGenerator : IIncrementalGenerator
             .OrderBy(t => t.ToDisplayString(), System.StringComparer.Ordinal).ToArray();
         var pending = new Queue<ITypeSymbol>(concreteModels);
         var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
-        var formatters = new List<(ITypeSymbol Type, string Constructor)>();
+        var formatters = new List<(string Type, string Constructor)>();
         while (pending.Count > 0)
         {
             output.CancellationToken.ThrowIfCancellationRequested();
@@ -199,24 +335,42 @@ public sealed class SexprGenerator : IIncrementalGenerator
             }
             if (type is IArrayTypeSymbol { IsSZArray: true } array)
             {
-                formatters.Add((type, "global::DotSexpr.Serializer.Formatters.ArrayFormatter<" +
+                formatters.Add((type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), "global::DotSexpr.Serializer.Formatters.ArrayFormatter<" +
                     array.ElementType.ToDisplayString(NullableTypeFormat) + ">"));
                 pending.Enqueue(array.ElementType);
             }
             else if (type is INamedTypeSymbol named &&
-                named.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == ObjectAttribute))
+                named.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() is ObjectAttribute or CallAttribute or CallUnionAttribute))
             {
-                var members = models.TryGetValue(named, out var cached) ? cached : GetObjectMembers(output, named);
+                var members = models.TryGetValue(named, out var cached) ? cached :
+                    named.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() is CallAttribute or CallUnionAttribute)
+                        ? new List<(ISymbol Symbol, ITypeSymbol Type, string Tag)>() : GetObjectMembers(output, named);
                 if (members == null)
                 {
                     return;
                 }
-                formatters.Add((type, named.WithNullableAnnotation(NullableAnnotation.NotAnnotated)
+                formatters.Add((type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), named.WithNullableAnnotation(NullableAnnotation.NotAnnotated)
                     .ToDisplayString(NullableTypeFormat) + ".@" + named.Name + "GeneratedFormatter"));
                 pending.Enqueue(compilation.CreateArrayTypeSymbol(named.WithNullableAnnotation(NullableAnnotation.NotAnnotated)));
                 foreach (var member in members)
                 {
                     pending.Enqueue(member.Type);
+                }
+                // External unions own their case formatters; consumers reference only the public union formatter.
+                if (SymbolEqualityComparer.Default.Equals(named.ContainingAssembly, compilation.Assembly))
+                {
+                    foreach (var unionType in GetUnionTypes(named))
+                    {
+                        if (unionType != null) pending.Enqueue(unionType);
+                    }
+                }
+                if (named.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == CallUnionAttribute &&
+                    a.NamedArguments.Any(p => p.Key == "AllowUnknownCalls" && p.Value.Value is true)))
+                {
+                    // UnknownCall is generated in this pass, so it has no symbol in the input compilation.
+                    var fallbackType = named.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) + ".UnknownCall";
+                    formatters.Add((fallbackType, fallbackType + ".UnknownCallGeneratedFormatter"));
+                    formatters.Add((fallbackType + "[]", "global::DotSexpr.Serializer.Formatters.ArrayFormatter<" + fallbackType + ">"));
                 }
             }
         }
@@ -237,7 +391,7 @@ public sealed class SexprGenerator : IIncrementalGenerator
         foreach (var formatter in formatters)
         {
             code.Append("if (typeof(T) == typeof(")
-                .Append(formatter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).AppendLine(")) {")
+                .Append(formatter.Type).AppendLine(")) {")
                 .Append("return (global::DotSexpr.Serializer.ISexprFormatter<T>)(object)new ")
                 .Append(formatter.Constructor).AppendLine("();\n}");
         }
@@ -264,6 +418,40 @@ public sealed class SexprGenerator : IIncrementalGenerator
             }
         }
         return false;
+    }
+
+    private static bool HasCallMembersOrConstructors(INamedTypeSymbol type) =>
+        type.DeclaringSyntaxReferences.Any(r => r.GetSyntax() is RecordDeclarationSyntax { ParameterList: not null }) ||
+        type.InstanceConstructors.Any(c => !c.IsImplicitlyDeclared) ||
+        type.GetMembers().Any(m => !m.IsImplicitlyDeclared && !m.IsStatic && m is IPropertySymbol or IFieldSymbol);
+
+    private static IEnumerable<INamedTypeSymbol?> GetUnionTypes(INamedTypeSymbol type)
+    {
+        var attribute = type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == CallUnionAttribute);
+        if (attribute?.ConstructorArguments.FirstOrDefault() is { Kind: TypedConstantKind.Array, IsNull: false } types)
+        {
+            foreach (var item in types.Values) yield return item.Value as INamedTypeSymbol;
+        }
+    }
+
+    private static bool IsCallName(string? name)
+    {
+        if (string.IsNullOrEmpty(name) || name!.StartsWith("#|", StringComparison.Ordinal) ||
+            name.Any(c => c <= ' ' || c is '(' or ')' or ';' or '"'))
+        {
+            return false;
+        }
+        // Keep generator validation identical to the parser's JSON number grammar.
+        try
+        {
+            new UTF8Encoding(false, true).GetByteCount(name);
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
+        return !System.Text.RegularExpressions.Regex.IsMatch(name,
+            @"\A-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\z");
     }
 
     private static List<(ISymbol Symbol, ITypeSymbol Type, string Tag)>? GetObjectMembers(

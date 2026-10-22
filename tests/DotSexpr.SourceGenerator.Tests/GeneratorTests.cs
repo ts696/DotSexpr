@@ -15,6 +15,179 @@ public class GeneratorTests
         .Append(MetadataReference.CreateFromFile(typeof(SexprObjectAttribute).Assembly.Location))
         .ToArray();
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void Generate_CallUnion_CompilesWithCSharp9(bool allowUnknownCalls)
+    {
+        var result = Generate($$"""
+            [SexprCallUnion(typeof(Move), typeof(Jump), typeof(Step), AllowUnknownCalls = {{(allowUnknownCalls ? "true" : "false")}})]
+            public abstract partial record ActionExpression : CallExpression;
+            [SexprCall("move")] public sealed partial record Move : ActionExpression;
+            [SexprCall("jump")] public sealed partial record Jump : ActionExpression;
+            [SexprCall("step")] public sealed partial record Step : ActionExpression;
+            [SexprObject] public partial class Plan
+            {
+                public ActionExpression[] Actions { get; set; } = System.Array.Empty<ActionExpression>();
+            }
+            """, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(result.GeneratorDiagnostics, Is.Empty);
+        Assert.That(result.CompilerErrors, Is.Empty);
+        Assert.That(result.GeneratedCount, Is.EqualTo(6));
+    }
+
+    [Test]
+    public void Generate_UnionFallbackNameCollision_ReportsDiagnostic()
+    {
+        var result = Generate("""
+            [SexprCallUnion(typeof(Move), AllowUnknownCalls = true)]
+            public abstract partial record ActionExpression : CallExpression
+            {
+                public class UnknownCall { }
+            }
+            [SexprCall("move")] public partial record Move : ActionExpression;
+            """);
+        Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Does.Contain("DSX008"));
+    }
+
+    [TestCase("[SexprCallUnion] public abstract partial record ActionExpression : CallExpression;")]
+    [TestCase("[SexprCallUnion(typeof(int))] public abstract partial record ActionExpression : CallExpression;")]
+    [TestCase("[SexprCallUnion] public partial record ActionExpression : CallExpression;")]
+    [TestCase("[SexprCallUnion] public abstract partial record ActionExpression;")]
+    [TestCase("[SexprCallUnion] public abstract partial record ActionExpression<T> : CallExpression;")]
+    [TestCase("[SexprCallUnion(null)] public abstract partial record ActionExpression : CallExpression;")]
+    public void Generate_InvalidCallUnion_ReportsDiagnostic(string source)
+    {
+        var result = Generate(source);
+        Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Is.EqualTo(new[] { "DSX008" }));
+        Assert.That(result.GeneratedCount, Is.Zero);
+    }
+
+    [TestCase("typeof(Move), typeof(Move)")]
+    [TestCase("typeof(Move), typeof(Other)")]
+    [TestCase("typeof(Unrelated)")]
+    public void Generate_InvalidUnionRegistrations_ReportsDiagnostic(string registrations)
+    {
+        var result = Generate($$"""
+            [SexprCallUnion({{registrations}})]
+            public abstract partial record ActionExpression : CallExpression;
+            [SexprCall("move")] public partial record Move : ActionExpression;
+            [SexprCall("move")] public partial record Other : ActionExpression;
+            [SexprCall("other")] public partial record Unrelated : CallExpression;
+            """);
+        Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Does.Contain("DSX008"));
+    }
+
+    [TestCase("[SexprCall(\"move\")] public record Move : CallExpression;", "DSX001")]
+    [TestCase("[SexprCall(\"move\")] public partial record Move;", "DSX007")]
+    [TestCase("[SexprCall(\"move\")] public abstract partial record Move : CallExpression;", "DSX002")]
+    [TestCase("[SexprCall(\"move\")] public partial record Move(int X) : CallExpression(\"move\", System.Array.Empty<Expression>());", "DSX007")]
+    [TestCase("[SexprCall(\"move\")] public partial record Move : CallExpression { public Move() : base(\"jump\", System.Array.Empty<Expression>()) { } }", "DSX007")]
+    [TestCase("[SexprCall(\"move\")] public partial record Move : CallExpression { public int X { get; set; } }", "DSX007")]
+    [TestCase("[SexprCall(\"move\"), SexprObject] public partial record Move : CallExpression;", "DSX007")]
+    public void Generate_InvalidCallDeclaration_ReportsDiagnostic(string source, string id)
+    {
+        var result = Generate(source);
+        Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Is.EqualTo(new[] { id }));
+        Assert.That(result.GeneratedCount, Is.Zero);
+    }
+
+    [TestCase("")]
+    [TestCase("10")]
+    [TestCase("-1.25e+3")]
+    [TestCase("1e9999")]
+    [TestCase("bad name")]
+    [TestCase("a;b")]
+    [TestCase("a(b")]
+    [TestCase("#|comment|#")]
+    [TestCase("\"move\"")]
+    public void Generate_InvalidCallName_ReportsDiagnostic(string name)
+    {
+        var literal = SymbolDisplay.FormatLiteral(name, true);
+        var result = Generate($"[SexprCall({literal})] public partial record Move : CallExpression;");
+        Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Is.EqualTo(new[] { "DSX007" }));
+        Assert.That(result.GeneratedCount, Is.Zero);
+    }
+
+    [Test]
+    public void Generate_InvalidUtf16CallName_ReportsDiagnostic()
+    {
+        var result = Generate("""
+            [SexprCall("\uD800")] public partial record Move : CallExpression;
+            """);
+        Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Is.EqualTo(new[] { "DSX007" }));
+        Assert.That(result.GeneratedCount, Is.Zero);
+    }
+
+    [TestCase("[SexprCall(\"move\")] public sealed partial record Move : CallExpression;")]
+    [TestCase("[SexprCall(\"移動🚀\")] public partial record Move : CallExpression;")]
+    [TestCase("[SexprCall(\"+1\")] public partial record Move : CallExpression;")]
+    [TestCase("[SexprCall(\"move\")] public partial record Move<T> : CallExpression where T : class, new();")]
+    [TestCase("public partial class Outer<T> where T : class { [SexprCall(\"move\")] public partial record Move : CallExpression; }")]
+    [TestCase("namespace A.@event { [SexprCall(\"move\")] public partial record @class : CallExpression; }")]
+    public void Generate_Call_CompilesWithCSharp9(string source)
+    {
+        var result = Generate(source, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(result.GeneratorDiagnostics, Is.Empty);
+        Assert.That(result.CompilerErrors, Is.Empty);
+        Assert.That(result.GeneratedCount, Is.EqualTo(2));
+    }
+
+    [TestCase(-1)]
+    [TestCase(0)]
+    [TestCase(1)]
+    [TestCase(int.MaxValue)]
+    public void Generate_ArgumentCount_CompilesWithCSharp9(int count)
+    {
+        var source = $"[SexprCall(\"not\", ArgumentCount = {count})] public sealed partial record Not : CallExpression;";
+        var result = Generate(source, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(result.GeneratorDiagnostics, Is.Empty);
+        Assert.That(result.CompilerErrors, Is.Empty);
+        Assert.That(result.GeneratedCount, Is.EqualTo(2));
+    }
+
+    [TestCase(-2)]
+    [TestCase(int.MinValue)]
+    public void Generate_InvalidArgumentCount_ReportsDiagnostic(int count)
+    {
+        var result = Generate($"[SexprCall(\"not\", ArgumentCount = {count})] public partial record Not : CallExpression;");
+        Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Is.EqualTo(new[] { "DSX007" }));
+        Assert.That(result.GeneratorDiagnostics[0].GetMessage(), Does.Contain("ArgumentCount"));
+        Assert.That(result.GeneratedCount, Is.Zero);
+    }
+
+    [Test]
+    public void Generate_CallName_CannotBeOverriddenWithInitializerOrWithExpression()
+    {
+        var result = Generate("""
+            [SexprCall("move")] public partial record Move : CallExpression;
+            public class Usage
+            {
+                public void Test()
+                {
+                    var move = new Move { Name = "jump" };
+                    var jump = move with { Name = "jump" };
+                }
+            }
+            """);
+        Assert.That(result.GeneratorDiagnostics, Is.Empty);
+        Assert.That(result.CompilerErrors.Select(e => e.Id), Is.EqualTo(new[] { "CS0200", "CS0200" }));
+    }
+
+    [Test]
+    public void Generate_Call_RegistersClosedGenericModelMembers()
+    {
+        var result = Generate("""
+            [SexprCall("move")] public partial record Move<T> : CallExpression where T : class;
+            [SexprObject] public partial class Plan
+            {
+                public Move<string>[] Steps { get; set; } = System.Array.Empty<Move<string>>();
+            }
+            """, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(result.GeneratorDiagnostics, Is.Empty);
+        Assert.That(result.CompilerErrors, Is.Empty);
+        Assert.That(result.GeneratedCount, Is.EqualTo(3));
+    }
+
     [TestCase("[SexprObject] public class Item { }", "DSX001")]
     [TestCase("public class Outer { [SexprObject] public partial class Item { } }", "DSX001")]
     [TestCase("[SexprObject] public abstract partial class Item { }", "DSX002")]
@@ -210,6 +383,60 @@ public class GeneratorTests
         var assembly = AssemblyLoadContext.Default.LoadFromStream(application);
         var text = assembly.GetType("Probe")!.GetMethod("Run")!.Invoke(null, null);
         Assert.That(text, Is.EqualTo("(:Model (:Values (1 2)) :Other (:Value 0))"));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void Generate_ExternalUnionWithInternalCase_UsesPublicFormatter(bool allowUnknownCalls)
+    {
+        var model = Generate($$"""
+            [SexprCallUnion(typeof(InternalMove), AllowUnknownCalls = {{(allowUnknownCalls ? "true" : "false")}})]
+            public abstract partial record ExternalAction : CallExpression;
+            [SexprCall("move", ArgumentCount = 1)] internal sealed partial record InternalMove : ExternalAction;
+            """, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(model.GeneratorDiagnostics, Is.Empty);
+        Assert.That(model.CompilerErrors, Is.Empty);
+        using var modelStream = new MemoryStream();
+        var emitted = model.Compilation.WithAssemblyName("InternalCaseModels" + Guid.NewGuid().ToString("N")).Emit(modelStream);
+        Assert.That(emitted.Success, Is.True, string.Join("\n", emitted.Diagnostics));
+        var reference = MetadataReference.CreateFromImage(modelStream.ToArray());
+        var consumer = Generate("""
+            [SexprObject] public partial class Document
+            {
+                public ExternalAction Action { get; set; } = null!;
+                public ExternalAction[] Actions { get; set; } = System.Array.Empty<ExternalAction>();
+            }
+            public static class Probe
+            {
+                public static string Run(string text)
+                {
+                    // Deliberately use only the consumer resolver, not DefaultResolver.
+                    var options = new SexprSerializerOptions { Resolver = DotSexpr.Generated.DotSexprGeneratedResolver.Instance };
+                    var document = SexprSerializer.Deserialize<Document>(text, options);
+                    if (document.Action.GetType().Name != "InternalMove")
+                        throw new System.InvalidOperationException("The external case formatter was not used.");
+                    return SexprSerializer.Serialize(document, options);
+                }
+            }
+            """, reference, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(consumer.GeneratorDiagnostics, Is.Empty);
+        Assert.That(consumer.CompilerErrors, Is.Empty);
+        modelStream.Position = 0;
+        AssemblyLoadContext.Default.LoadFromStream(modelStream);
+        using var consumerStream = new MemoryStream();
+        emitted = consumer.Compilation.WithAssemblyName("InternalCaseConsumer" + Guid.NewGuid().ToString("N")).Emit(consumerStream);
+        Assert.That(emitted.Success, Is.True, string.Join("\n", emitted.Diagnostics));
+        consumerStream.Position = 0;
+        var assembly = AssemblyLoadContext.Default.LoadFromStream(consumerStream);
+        var actions = allowUnknownCalls ? "((move 1) (custom (move 2)))" : "((move 1))";
+        var input = $"(:Action (move (move 3)) :Actions {actions})";
+        var output = assembly.GetType("Probe")!.GetMethod("Run")!.Invoke(null, new object[] { input });
+        Assert.That(output, Is.EqualTo(input));
+        var error = Assert.Throws<System.Reflection.TargetInvocationException>(() =>
+            assembly.GetType("Probe")!.GetMethod("Run")!.Invoke(null, new object[] { "(:Action (move) :Actions ())" }))!;
+        Assert.That(error.InnerException, Is.TypeOf<SexprSerializerException>());
+        Assert.That(((SexprSerializerException)error.InnerException!).Path, Is.EqualTo("$.Action"));
+        Assert.That(error.InnerException!.Message, Does.Contain("requires exactly 1 argument(s)"));
     }
 
     [Test]
