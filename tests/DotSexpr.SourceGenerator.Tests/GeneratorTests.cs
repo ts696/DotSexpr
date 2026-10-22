@@ -362,6 +362,55 @@ public class GeneratorTests
         Assert.That(text, Is.EqualTo("(:Model (:Values (1 2)) :Other (:Value 0))"));
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void Generate_ExternalUnionWithInternalCase_UsesPublicFormatter(bool allowUnknownCalls)
+    {
+        var model = Generate($$"""
+            [SexprCallUnion(typeof(InternalMove), AllowUnknownCalls = {{(allowUnknownCalls ? "true" : "false")}})]
+            public abstract partial record ExternalAction : CallExpression;
+            [SexprCall("move")] internal sealed partial record InternalMove : ExternalAction;
+            """, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(model.GeneratorDiagnostics, Is.Empty);
+        Assert.That(model.CompilerErrors, Is.Empty);
+        using var modelStream = new MemoryStream();
+        var emitted = model.Compilation.WithAssemblyName("InternalCaseModels" + Guid.NewGuid().ToString("N")).Emit(modelStream);
+        Assert.That(emitted.Success, Is.True, string.Join("\n", emitted.Diagnostics));
+        var reference = MetadataReference.CreateFromImage(modelStream.ToArray());
+        var consumer = Generate("""
+            [SexprObject] public partial class Document
+            {
+                public ExternalAction Action { get; set; } = null!;
+                public ExternalAction[] Actions { get; set; } = System.Array.Empty<ExternalAction>();
+            }
+            public static class Probe
+            {
+                public static string Run(string text)
+                {
+                    // Deliberately use only the consumer resolver, not DefaultResolver.
+                    var options = new SexprSerializerOptions { Resolver = DotSexpr.Generated.DotSexprGeneratedResolver.Instance };
+                    var document = SexprSerializer.Deserialize<Document>(text, options);
+                    if (document.Action.GetType().Name != "InternalMove")
+                        throw new System.InvalidOperationException("The external case formatter was not used.");
+                    return SexprSerializer.Serialize(document, options);
+                }
+            }
+            """, reference, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(consumer.GeneratorDiagnostics, Is.Empty);
+        Assert.That(consumer.CompilerErrors, Is.Empty);
+        modelStream.Position = 0;
+        AssemblyLoadContext.Default.LoadFromStream(modelStream);
+        using var consumerStream = new MemoryStream();
+        emitted = consumer.Compilation.WithAssemblyName("InternalCaseConsumer" + Guid.NewGuid().ToString("N")).Emit(consumerStream);
+        Assert.That(emitted.Success, Is.True, string.Join("\n", emitted.Diagnostics));
+        consumerStream.Position = 0;
+        var assembly = AssemblyLoadContext.Default.LoadFromStream(consumerStream);
+        var actions = allowUnknownCalls ? "((move 1) (custom (move 2)))" : "((move 1))";
+        var input = $"(:Action (move (move 3)) :Actions {actions})";
+        var output = assembly.GetType("Probe")!.GetMethod("Run")!.Invoke(null, new object[] { input });
+        Assert.That(output, Is.EqualTo(input));
+    }
+
     [Test]
     public void Generate_ModuleInitializers_RegisterMultipleAssemblies()
     {

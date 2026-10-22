@@ -12,9 +12,9 @@ public class CallExpressionUnionFormatter<T> : ISexprFormatter<T> where T : Call
     private Func<string, IReadOnlyList<Expression>, T>? _fallback;
     private Type? _fallbackType;
 
-    protected void Register<TCall>(string name) where TCall : T
+    protected void Register<TCall>(string name, ISexprFormatter<TCall>? formatter = null) where TCall : T
     {
-        var entry = new Entry<TCall>();
+        var entry = new Entry<TCall>(formatter);
         _names.Add(name, entry);
         _types.Add(typeof(TCall), entry);
     }
@@ -85,10 +85,17 @@ public class CallExpressionUnionFormatter<T> : ISexprFormatter<T> where T : Call
             _formatter = new ArgumentFormatter(owner);
         }
 
-        public ISexprFormatter<TValue>? GetFormatter<TValue>() =>
-            typeof(TValue) == typeof(Expression) || typeof(TValue) == typeof(CallExpression)
-                ? (ISexprFormatter<TValue>)(object)_formatter
-                : _fallback.GetFormatter<TValue>();
+        public ISexprFormatter<TValue>? GetFormatter<TValue>()
+        {
+            if (typeof(TValue) == typeof(Expression) || typeof(TValue) == typeof(CallExpression))
+            {
+                return (ISexprFormatter<TValue>)(object)_formatter;
+            }
+            // A consumer resolver need not expose another assembly's internal case types.
+            return _fallback.GetFormatter<TValue>() ??
+                (Owner._types.TryGetValue(typeof(TValue), out var entry)
+                    ? (ISexprFormatter<TValue>?)entry.Formatter : null);
+        }
     }
 
     private sealed class ArgumentFormatter(CallExpressionUnionFormatter<T> owner)
@@ -119,11 +126,23 @@ public class CallExpressionUnionFormatter<T> : ISexprFormatter<T> where T : Call
 
         public void Serialize(ref SexprEmitter emitter, Expression value, SexprSerializerOptions options)
         {
-            if (value is CallExpression call && owner._fallback == null && !owner._names.ContainsKey(call.Name))
+            if (value is T registeredCall)
             {
-                var error = SexprSerializerException.ForSerialization($"Call name '{call.Name}' is not registered for '{typeof(T)}'.");
-                error.PrependIndex(0);
-                throw error;
+                owner.Serialize(ref emitter, registeredCall, options);
+                return;
+            }
+            if (value is CallExpression call)
+            {
+                if (owner._names.ContainsKey(call.Name) || call.GetType() != typeof(CallExpression))
+                {
+                    throw SexprSerializerException.ForSerialization($"Call type '{call.GetType()}' is not registered for '{typeof(T)}'.");
+                }
+                if (owner._fallback == null)
+                {
+                    var error = SexprSerializerException.ForSerialization($"Call name '{call.Name}' is not registered for '{typeof(T)}'.");
+                    error.PrependIndex(0);
+                    throw error;
+                }
             }
             new ExpressionFormatter().Serialize(ref emitter, value, options);
         }
@@ -134,12 +153,15 @@ public class CallExpressionUnionFormatter<T> : ISexprFormatter<T> where T : Call
 
     private interface IEntry
     {
+        object? Formatter { get; }
         T Deserialize(in SNode node, SexprSerializerOptions options);
         void Serialize(ref SexprEmitter emitter, T value, SexprSerializerOptions options);
     }
 
-    private sealed class Entry<TCall> : IEntry where TCall : T
+    private sealed class Entry<TCall>(ISexprFormatter<TCall>? formatter) : IEntry where TCall : T
     {
+        public object? Formatter => formatter;
+
         public T Deserialize(in SNode node, SexprSerializerOptions options) =>
             SexprSerializer.Deserialize<TCall>(in node, options);
 

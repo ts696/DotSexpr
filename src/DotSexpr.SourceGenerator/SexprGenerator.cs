@@ -208,7 +208,9 @@ public sealed class SexprGenerator : IIncrementalGenerator
             foreach (var unionCase in unionCases)
             {
                 code.Append("Register<").Append(unionCase.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
-                    .Append(">(").Append(SymbolDisplay.FormatLiteral(unionCase.Name, true)).AppendLine(");");
+                    .Append(">(").Append(SymbolDisplay.FormatLiteral(unionCase.Name, true)).Append(", new ")
+                    .Append(unionCase.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+                    .Append(".@").Append(unionCase.Type.Name).AppendLine("GeneratedFormatter());");
             }
             if (allowUnknownCalls)
             {
@@ -343,9 +345,13 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 {
                     pending.Enqueue(member.Type);
                 }
-                foreach (var unionType in GetUnionTypes(named))
+                // External unions own their case formatters; consumers reference only the public union formatter.
+                if (SymbolEqualityComparer.Default.Equals(named.ContainingAssembly, compilation.Assembly))
                 {
-                    if (unionType != null) pending.Enqueue(unionType);
+                    foreach (var unionType in GetUnionTypes(named))
+                    {
+                        if (unionType != null) pending.Enqueue(unionType);
+                    }
                 }
                 if (named.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == CallUnionAttribute &&
                     a.NamedArguments.Any(p => p.Key == "AllowUnknownCalls" && p.Value.Value is true)))

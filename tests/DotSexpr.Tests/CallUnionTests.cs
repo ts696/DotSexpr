@@ -21,6 +21,8 @@ public partial class CallUnionTests
     // Being a derived type (or sharing a registered name) does not register a call.
     public sealed record Unregistered() : ActionExpression("move", []);
 
+    public sealed record ForeignCall() : CallExpression("move", []);
+
     [SexprObject]
     public partial class Plan
     {
@@ -125,6 +127,25 @@ public partial class CallUnionTests
         var action = SexprSerializer.Deserialize<ActionExpression>("(step)", options);
         Assert.That(action.Arguments, Is.EqualTo(new[] { new IntegerExpression(7) }));
         Assert.That(SexprSerializer.Serialize<ActionExpression>(new Step(), options), Is.EqualTo("(step 7)"));
+    }
+
+    [Test]
+    public void Union_NestedCallsDelegateToCaseFormatterFromCustomResolver()
+    {
+        var options = new SexprSerializerOptions { Resolver = new CustomResolver() };
+        ActionExpression action = new Move([new Jump([new Step()])]);
+        Assert.That(SexprSerializer.Serialize(action, options), Is.EqualTo("(move (jump (step 7)))"));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void Union_NestedUnregisteredTypeCannotUseARegisteredName(bool foreign)
+    {
+        Expression call = foreign ? new ForeignCall() : new Unregistered();
+        var plan = new Plan { Actions = [new Move([new Jump([call])])] };
+        var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Serialize(plan))!;
+        Assert.That(error.Path, Is.EqualTo("$.Actions[0][1][1]"));
+        Assert.That(error.Message, Does.Contain("not registered"));
     }
 
     private sealed class CustomResolver : ISexprFormatterResolver
