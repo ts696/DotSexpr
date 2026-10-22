@@ -89,8 +89,7 @@ model's members.
 
 `Expression` represents symbols, numbers, and nested calls. Integer literals use
 `IntegerExpression` (`long`); literals containing a fraction or exponent use
-`NumberExpression` (`double`). Integers outside the `long` range and floating-point
-values outside the finite `double` range are rejected with a located error.
+`NumberExpression` (`double`).
 
 ```csharp
 var expression = SexprSerializer.Deserialize<Expression>("(move ?from ?to 10 0.5)");
@@ -180,15 +179,8 @@ public sealed partial record And : ConditionExpression;
 public sealed partial record Or : ConditionExpression;
 ```
 
-No serializer option or separate registration is required. This behavior applies when
-reading the union type, including union-typed model members and arrays. Custom case and
-number formatters still use the supplied resolver. The behavior is scoped to the union
-and does not affect unrelated expression properties or mutate options.
-
-Unregistered names are rejected at every level by default, during both serialization
-and deserialization. To accept them, set `AllowUnknownCalls = true`. This
-generates a sealed `UnknownCall` record derived from the union, so an arbitrary predicate
-can be stored in the same property as the registered operators:
+Set `AllowUnknownCalls = true` to accept unregistered names at any depth. The generated
+`UnknownCall` type inherits from the union and preserves the call name and arguments:
 
 ```csharp
 var task = SexprSerializer.Deserialize<ActionDefinition>(
@@ -213,21 +205,13 @@ public partial class ActionDefinition
 }
 ```
 
-`ready`, `injured`, and other unregistered names become
-`ConditionExpression.UnknownCall`, retaining their names and arguments. This applies
-at every level and registered operators inside predicates are
-still recognized. These records support serialization and deserialization on their own,
-through the union, and in arrays. `AllowUnknownCalls` defaults to `false`; it permits
-unknown names, while malformed call lists still produce located errors. The nested name
-`UnknownCall` is reserved when this feature is enabled.
-
-When serialized through the union, an `UnknownCall` must use an unregistered name.
-Registered names must use their dedicated call types, at the root and in arguments.
+When serialized through the union, registered names must use their dedicated call types.
+The generated nested name `UnknownCall` is reserved.
 
 Names are case-sensitive and read-only, including on ordinary `CallExpression` values.
 Arguments remain expressions and may contain calls with other names. Deserializing as
 `Expression` or `CallExpression` produces an ordinary call; request `Move` to validate
-its name. Numeric output is normalized, so `1.0` or `1e3` may serialize as `1` or `1000`.
+its name.
 
 ### Serialization
 
