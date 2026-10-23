@@ -9,12 +9,38 @@ public class CallExpressionFormatter<T>(string name, Func<IReadOnlyList<Expressi
     : ISexprFormatter<T> where T : CallExpression
 {
     private IArgument[]? _arguments;
+    private IArgument? _rest;
 
     /// <summary>Sets the argument schema. An empty schema requires no arguments.</summary>
     protected void SetArgumentTypes(params IArgument[] arguments) => _arguments = arguments;
 
+    /// <summary>Accepts zero or more trailing arguments of the given type after the fixed arguments.</summary>
+    protected void SetRestArgumentType(IArgument argument)
+    {
+        _arguments ??= Array.Empty<IArgument>();
+        _rest = argument;
+    }
+
+    /// <summary>Converts trailing expressions to the constructor's params array.</summary>
+    protected static TArgument[] RestArguments<TArgument>(IReadOnlyList<Expression> arguments, int start)
+        where TArgument : Expression
+    {
+        var rest = new TArgument[arguments.Count - start];
+        for (var i = 0; i < rest.Length; i++) rest[i] = (TArgument)arguments[start + i];
+        return rest;
+    }
+
+    private bool IsValidCount(int count) => _arguments == null ||
+        (_rest == null ? count == _arguments.Length : count >= _arguments.Length);
+
+    private string CountError(int count) =>
+        $"Call '{name}' requires {(_rest == null ? "exactly" : "at least")} {_arguments!.Length} argument(s), but found {count}.";
+
+    private IArgument? ArgumentAt(int index) => _arguments == null ? null :
+        index < _arguments.Length ? _arguments[index] : _rest;
+
     /// <summary>Uses the declared expression type's formatter, with an optional fallback for external dependencies.</summary>
-    protected static IArgument Argument<TArgument>(Func<ISexprFormatter<TArgument>>? fallback = null)
+    protected static IArgument Argument<TArgument>(Func<ISexprFormatter<TArgument>?>? fallback = null)
         where TArgument : Expression => new TypedArgument<TArgument>(fallback);
 
     public void Serialize(ref SexprEmitter emitter, T value, SexprSerializerOptions options)
@@ -25,14 +51,14 @@ public class CallExpressionFormatter<T>(string name, Func<IReadOnlyList<Expressi
             error.PrependIndex(0);
             throw error;
         }
-        if (value.Arguments == null)
+        var arguments = value.Arguments;
+        if (arguments == null)
         {
             throw SexprSerializerException.ForSerialization("Call arguments cannot be null.");
         }
-        if (_arguments != null && value.Arguments.Count != _arguments.Length)
+        if (!IsValidCount(arguments.Count))
         {
-            throw SexprSerializerException.ForSerialization(
-                $"Call '{name}' requires exactly {_arguments.Length} argument(s), but found {value.Arguments.Count}.");
+            throw SexprSerializerException.ForSerialization(CountError(arguments.Count));
         }
         emitter.BeginList();
         try
@@ -44,14 +70,15 @@ public class CallExpressionFormatter<T>(string name, Func<IReadOnlyList<Expressi
             exception.PrependIndex(0);
             throw;
         }
-        for (var i = 0; i < value.Arguments.Count; i++)
+        for (var i = 0; i < arguments.Count; i++)
         {
             try
             {
-                if (_arguments == null)
-                    SexprSerializer.Serialize(ref emitter, value.Arguments[i], options);
+                var formatter = ArgumentAt(i);
+                if (formatter == null)
+                    SexprSerializer.Serialize(ref emitter, arguments[i], options);
                 else
-                    _arguments[i].Serialize(ref emitter, value.Arguments[i], options);
+                    formatter.Serialize(ref emitter, arguments[i], options);
             }
             catch (SexprSerializerException exception)
             {
@@ -72,10 +99,9 @@ public class CallExpressionFormatter<T>(string name, Func<IReadOnlyList<Expressi
             throw error;
         }
         var count = node.Count - 1;
-        if (_arguments != null && count != _arguments.Length)
+        if (!IsValidCount(count))
         {
-            throw new SexprSerializerException(
-                $"Call '{name}' requires exactly {_arguments.Length} argument(s), but found {count}.", node);
+            throw new SexprSerializerException(CountError(count), node);
         }
         var arguments = new Expression[count];
         var index = 0;
@@ -84,9 +110,12 @@ public class CallExpressionFormatter<T>(string name, Func<IReadOnlyList<Expressi
             foreach (var child in node)
             {
                 if (index > 0)
-                    arguments[index - 1] = _arguments == null
+                {
+                    var formatter = ArgumentAt(index - 1);
+                    arguments[index - 1] = formatter == null
                         ? SexprSerializer.Deserialize<Expression>(in child, options)
-                        : _arguments[index - 1].Deserialize(in child, options);
+                        : formatter.Deserialize(in child, options);
+                }
                 index++;
             }
         }
@@ -104,7 +133,7 @@ public class CallExpressionFormatter<T>(string name, Func<IReadOnlyList<Expressi
         void Serialize(ref SexprEmitter emitter, Expression value, SexprSerializerOptions options);
     }
 
-    private sealed class TypedArgument<TArgument>(Func<ISexprFormatter<TArgument>>? fallback) : IArgument
+    private sealed class TypedArgument<TArgument>(Func<ISexprFormatter<TArgument>?>? fallback) : IArgument
         where TArgument : Expression
     {
         public Expression Deserialize(in SNode node, SexprSerializerOptions options)

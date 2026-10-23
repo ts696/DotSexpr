@@ -118,12 +118,39 @@ string text = SexprSerializer.Serialize(created); // (move ?from ?to 10 0.5)
 public sealed partial record Move : CallExpression;
 ```
 
-The generator creates an empty constructor, an arguments constructor, and a formatter
-registered through the generated resolver. Typed calls also work in arrays and as
-`[SexprObject]` members. Containing types must be partial; explicit constructors and
-additional instance fields/properties are not supported on `[SexprCall]` records.
+For records without positional parameters, the generator creates an empty constructor,
+an arguments constructor, and a formatter registered through the generated resolver.
+Typed calls also work in arrays and as `[SexprObject]` members. Containing types must
+be partial.
 
-Use `ArgumentTypes` to specify each argument's expression type in order:
+To define arguments through the constructor, use a positional record. The call name
+appears only in `[SexprCall]`:
+
+```csharp
+[SexprCall("not")]
+public sealed partial record Not(CallExpression Operand) : CallExpression;
+
+[SexprCall("and")]
+public sealed partial record And(params CallExpression[] Operands) : CallExpression;
+
+[SexprCall("repeat")]
+public sealed partial record Repeat(IntegerExpression Count, params CallExpression[] Actions) : CallExpression;
+```
+
+Each ordinary parameter is one required argument. A trailing `params T[]` accepts
+zero or more arguments of type `T`, so `(and)`, `(and (ready x) (visited y))`, and
+`(repeat 3 (move x) (inspect x))` are valid. An empty positional constructor `Zero()`
+requires no arguments. Parameters must derive from `Expression`, or be `Expression`
+itself; optional parameters, additional constructors and instance fields/properties
+are not supported.
+
+The formatter calls the positional constructor when reading. `Name` is generated from
+the attribute, and `Arguments` reflects the positional properties. Update those
+properties directly or through `with`; assigning `Arguments` on a positional call
+throws `InvalidOperationException`. Do not specify `ArgumentTypes` on a positional record.
+
+For records without positional parameters, use `ArgumentTypes` to specify each
+argument's expression type in order:
 
 ```csharp
 [SexprCall("not", ArgumentTypes = new[] { typeof(CallExpression) })]
@@ -180,10 +207,10 @@ var expression = SexprSerializer.Deserialize<ConditionExpression>(
 public abstract partial record ConditionExpression : CallExpression;
 
 [SexprCall("and")]
-public sealed partial record And : ConditionExpression;
+public sealed partial record And(params ConditionExpression[] Operands) : ConditionExpression;
 
 [SexprCall("or")]
-public sealed partial record Or : ConditionExpression;
+public sealed partial record Or(params ConditionExpression[] Operands) : ConditionExpression;
 ```
 
 Set `AllowUnknownCalls = true` to accept unregistered names at any depth. The generated
@@ -198,11 +225,11 @@ var task = SexprSerializer.Deserialize<ActionDefinition>(
 public abstract partial record ConditionExpression : CallExpression;
 
 [SexprCall("and")]
-public sealed partial record And : ConditionExpression;
+public sealed partial record And(params ConditionExpression[] Operands) : ConditionExpression;
 [SexprCall("or")]
-public sealed partial record Or : ConditionExpression;
-[SexprCall("not", ArgumentTypes = new[] { typeof(ConditionExpression) })]
-public sealed partial record Not : ConditionExpression;
+public sealed partial record Or(params ConditionExpression[] Operands) : ConditionExpression;
+[SexprCall("not")]
+public sealed partial record Not(ConditionExpression Operand) : ConditionExpression;
 
 [SexprObject]
 public partial class ActionDefinition

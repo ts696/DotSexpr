@@ -30,15 +30,16 @@ public class ExpressionFormatter : ISexprFormatter<Expression>
                     exception.PrependIndex(0);
                     throw;
                 }
-                if (call.Arguments == null)
+                var arguments = call.Arguments;
+                if (arguments == null)
                 {
                     throw SexprSerializerException.ForSerialization("Call arguments cannot be null.");
                 }
-                for (var i = 0; i < call.Arguments.Count; i++)
+                for (var i = 0; i < arguments.Count; i++)
                 {
                     try
                     {
-                        SexprSerializer.Serialize(ref emitter, call.Arguments[i], options);
+                        SexprSerializer.Serialize(ref emitter, arguments[i], options);
                     }
                     catch (SexprSerializerException exception)
                     {

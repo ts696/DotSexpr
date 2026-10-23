@@ -8,13 +8,13 @@ public partial class PreconditionTests
     public abstract partial record ConditionExpression : CallExpression;
 
     [SexprCall("and")]
-    public sealed partial record And : ConditionExpression;
+    public sealed partial record And(params ConditionExpression[] Operands) : ConditionExpression;
 
     [SexprCall("or")]
-    public sealed partial record Or : ConditionExpression;
+    public sealed partial record Or(params ConditionExpression[] Operands) : ConditionExpression;
 
-    [SexprCall("not", ArgumentTypes = new[] { typeof(ConditionExpression) })]
-    public sealed partial record Not : ConditionExpression;
+    [SexprCall("not")]
+    public sealed partial record Not(ConditionExpression Operand) : ConditionExpression;
 
     [SexprObject]
     public partial class Task
