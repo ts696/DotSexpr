@@ -31,6 +31,13 @@ if (SexprSerializer.Serialize(condition) != conditionText)
 {
     throw new InvalidOperationException("The packaged generator did not serialize a call union.");
 }
+var repeat = Load<Repeat>("(repeat 3 (move ?from ?to))");
+if (repeat.Arguments[0] is not IntegerExpression { Value: 3 } ||
+    repeat.Arguments[1] is not CallExpression { Name: "move" } ||
+    SexprSerializer.Serialize(repeat) != "(repeat 3 (move ?from ?to))")
+{
+    throw new InvalidOperationException("The packaged generator did not apply argument types.");
+}
 foreach (var assembly in new[] { "DotSexpr.SourceGenerator.dll", "Microsoft.CodeAnalysis.dll", "Microsoft.CodeAnalysis.CSharp.dll" })
 {
     if (File.Exists(Path.Combine(AppContext.BaseDirectory, assembly)))
@@ -61,5 +68,8 @@ public abstract partial record Condition : CallExpression;
 [SexprCall("and")]
 public sealed partial record And : Condition;
 
-[SexprCall("not", ArgumentCount = 1)]
+[SexprCall("not", ArgumentTypes = new[] { typeof(Condition) })]
 public sealed partial record Not : Condition;
+
+[SexprCall("repeat", ArgumentTypes = new[] { typeof(IntegerExpression), typeof(CallExpression) })]
+public sealed partial record Repeat : CallExpression;

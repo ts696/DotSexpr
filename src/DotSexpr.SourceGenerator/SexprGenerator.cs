@@ -95,7 +95,7 @@ public sealed class SexprGenerator : IIncrementalGenerator
         }
         var callAttribute = type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == CallAttribute);
         var callName = callAttribute?.ConstructorArguments.FirstOrDefault().Value as string;
-        var argumentCount = callAttribute?.NamedArguments.FirstOrDefault(a => a.Key == "ArgumentCount").Value.Value as int? ?? -1;
+        var argumentTypes = GetArgumentTypes(type);
         var unionCases = new List<(INamedTypeSymbol Type, string Name)>();
         if (unionAttribute != null)
         {
@@ -151,9 +151,11 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 Report(output, InvalidCall, type, type.Name, "the name must be a valid, non-numeric symbol");
                 return null;
             }
-            if (argumentCount < -1)
+            if (argumentTypes != null && argumentTypes.Any(t => t is not INamedTypeSymbol named ||
+                named.IsUnboundGenericType || !IsExpressionType(named)))
             {
-                Report(output, InvalidCall, type, type.Name, "ArgumentCount must be -1 (unconstrained) or a non-negative integer");
+                Report(output, InvalidCall, type, type.Name,
+                    "ArgumentTypes must contain non-null, closed Expression types or types derived from Expression");
                 return null;
             }
         }
@@ -236,9 +238,23 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 .Append("public ").Append(formatterName).Append("() : base(")
                 .Append(SymbolDisplay.FormatLiteral(callName!, true)).Append(", arguments => new ")
                 .Append(fullName).Append("(arguments)) {");
-            if (argumentCount >= 0)
+            if (argumentTypes != null)
             {
-                code.Append("ArgumentCount = ").Append(argumentCount).AppendLine(";");
+                code.Append("SetArgumentTypes(");
+                for (var i = 0; i < argumentTypes.Length; i++)
+                {
+                    var argumentType = argumentTypes[i]!;
+                    if (i > 0) code.Append(", ");
+                    code.Append("Argument<").Append(argumentType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(">(");
+                    if (argumentType.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() is CallAttribute or CallUnionAttribute))
+                    {
+                        // Create on demand: recursive call schemas must not recursively construct formatters.
+                        code.Append("() => new ").Append(argumentType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+                            .Append(".@").Append(argumentType.Name).Append("GeneratedFormatter()");
+                    }
+                    code.Append(')');
+                }
+                code.AppendLine(");");
             }
             code.AppendLine("}\n}");
         }
@@ -363,6 +379,10 @@ public sealed class SexprGenerator : IIncrementalGenerator
                     {
                         if (unionType != null) pending.Enqueue(unionType);
                     }
+                    foreach (var argumentType in GetArgumentTypes(named) ?? Array.Empty<ITypeSymbol?>())
+                    {
+                        if (argumentType != null) pending.Enqueue(argumentType);
+                    }
                 }
                 if (named.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == CallUnionAttribute &&
                     a.NamedArguments.Any(p => p.Key == "AllowUnknownCalls" && p.Value.Value is true)))
@@ -432,6 +452,23 @@ public sealed class SexprGenerator : IIncrementalGenerator
         {
             foreach (var item in types.Values) yield return item.Value as INamedTypeSymbol;
         }
+    }
+
+    private static ITypeSymbol?[]? GetArgumentTypes(INamedTypeSymbol type)
+    {
+        var attribute = type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == CallAttribute);
+        return attribute?.NamedArguments.FirstOrDefault(a => a.Key == "ArgumentTypes").Value is
+            { Kind: TypedConstantKind.Array, IsNull: false } types
+            ? types.Values.Select(item => item.Value as ITypeSymbol).ToArray() : null;
+    }
+
+    private static bool IsExpressionType(INamedTypeSymbol type)
+    {
+        for (var current = type; current != null; current = current.BaseType)
+        {
+            if (current.ToDisplayString() == "DotSexpr.Serializer.Expression") return true;
+        }
+        return false;
     }
 
     private static bool IsCallName(string? name)

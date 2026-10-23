@@ -13,7 +13,7 @@ public partial class PreconditionTests
     [SexprCall("or")]
     public sealed partial record Or : ConditionExpression;
 
-    [SexprCall("not", ArgumentCount = 1)]
+    [SexprCall("not", ArgumentTypes = new[] { typeof(ConditionExpression) })]
     public sealed partial record Not : ConditionExpression;
 
     [SexprObject]

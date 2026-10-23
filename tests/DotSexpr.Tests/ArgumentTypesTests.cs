@@ -2,18 +2,18 @@ using DotSexpr.Serializer;
 
 namespace DotSexpr.Tests;
 
-public partial class ArgumentCountTests
+public partial class ArgumentTypesTests
 {
     [SexprCallUnion(typeof(Not), typeof(And), typeof(Zero), AllowUnknownCalls = true)]
     public abstract partial record Condition : CallExpression;
 
-    [SexprCall("not", ArgumentCount = 1)]
+    [SexprCall("not", ArgumentTypes = new[] { typeof(Expression) })]
     public sealed partial record Not : Condition;
 
     [SexprCall("and")]
     public sealed partial record And : Condition;
 
-    [SexprCall("zero", ArgumentCount = 0)]
+    [SexprCall("zero", ArgumentTypes = new Type[] { })]
     public sealed partial record Zero : Condition;
 
     [SexprObject]
@@ -24,7 +24,7 @@ public partial class ArgumentCountTests
     }
 
     [Test]
-    public void ArgumentCount_ValidCallsRoundTrip()
+    public void ArgumentTypes_ValidCallsRoundTrip()
     {
         const string text = "(:precondition (and (not (ready ?actor)) (zero) (custom 1 2)))";
         var task = SexprSerializer.Deserialize<Task>(text);
@@ -37,7 +37,7 @@ public partial class ArgumentCountTests
     [TestCase("(not)", 0)]
     [TestCase("(not x y)", 2)]
     [TestCase("(not \"invalid\" \"invalid\")", 2)]
-    public void ArgumentCount_InvalidInputFailsBeforeReadingChildren(string text, int actualCount)
+    public void ArgumentTypes_InvalidInputFailsBeforeReadingChildren(string text, int actualCount)
     {
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Deserialize<Not>(text))!;
         Assert.That(error.Path, Is.EqualTo("$"));
@@ -47,7 +47,7 @@ public partial class ArgumentCountTests
 
     [TestCase(0)]
     [TestCase(2)]
-    public void ArgumentCount_InvalidOutputFailsForDirectAndNestedCalls(int count)
+    public void ArgumentTypes_InvalidOutputFailsForDirectAndNestedCalls(int count)
     {
         var not = new Not([new SymbolExpression("x")]) with
         {
@@ -64,7 +64,7 @@ public partial class ArgumentCountTests
 
     [TestCase("(:precondition (and (not)))")]
     [TestCase("(:precondition (custom (not x y)))")]
-    public void ArgumentCount_NestedInputRetainsCallLocation(string text)
+    public void ArgumentTypes_NestedInputRetainsCallLocation(string text)
     {
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Deserialize<Task>(text))!;
         Assert.That(error.Path, Is.EqualTo("$.precondition[1]"));
@@ -72,7 +72,7 @@ public partial class ArgumentCountTests
     }
 
     [Test]
-    public void ArgumentCount_ZeroExcludesTheCallName()
+    public void ArgumentTypes_ZeroExcludesTheCallName()
     {
         Assert.That(SexprSerializer.Serialize(new Zero()), Is.EqualTo("(zero)"));
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Deserialize<Zero>("(zero x)"))!;
@@ -81,7 +81,7 @@ public partial class ArgumentCountTests
     }
 
     [Test]
-    public void ArgumentCount_OmittedConstraintRemainsUnrestricted()
+    public void ArgumentTypes_OmittedConstraintRemainsUnrestricted()
     {
         Assert.That(SexprSerializer.Serialize(new And()), Is.EqualTo("(and)"));
         var and = SexprSerializer.Deserialize<And>("(and x y z)");
@@ -90,7 +90,7 @@ public partial class ArgumentCountTests
     }
 
     [Test]
-    public void ArgumentCount_NameValidationComesFirst()
+    public void ArgumentTypes_NameValidationComesFirst()
     {
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Deserialize<Not>("(and)"))!;
         Assert.That(error.Path, Is.EqualTo("$[0]"));

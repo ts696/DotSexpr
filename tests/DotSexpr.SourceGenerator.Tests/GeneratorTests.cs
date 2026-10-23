@@ -132,27 +132,60 @@ public class GeneratorTests
         Assert.That(result.GeneratedCount, Is.EqualTo(2));
     }
 
-    [TestCase(-1)]
-    [TestCase(0)]
-    [TestCase(1)]
-    [TestCase(int.MaxValue)]
-    public void Generate_ArgumentCount_CompilesWithCSharp9(int count)
+    [TestCase("null")]
+    [TestCase("new System.Type[] { }")]
+    [TestCase("new[] { typeof(Expression) }")]
+    [TestCase("new[] { typeof(IntegerExpression), typeof(NumberExpression), typeof(SymbolExpression), typeof(CallExpression) }")]
+    public void Generate_ArgumentTypes_CompilesWithCSharp9(string types)
     {
-        var source = $"[SexprCall(\"not\", ArgumentCount = {count})] public sealed partial record Not : CallExpression;";
+        var source = $"[SexprCall(\"not\", ArgumentTypes = {types})] public sealed partial record Not : CallExpression;";
         var result = Generate(source, language: LanguageVersion.CSharp9, warningsAsErrors: true);
         Assert.That(result.GeneratorDiagnostics, Is.Empty);
         Assert.That(result.CompilerErrors, Is.Empty);
         Assert.That(result.GeneratedCount, Is.EqualTo(2));
     }
 
-    [TestCase(-2)]
-    [TestCase(int.MinValue)]
-    public void Generate_InvalidArgumentCount_ReportsDiagnostic(int count)
+    [TestCase("new System.Type[] { null }")]
+    [TestCase("new[] { typeof(int) }")]
+    [TestCase("new[] { typeof(string) }")]
+    [TestCase("new[] { typeof(Expression[]) }")]
+    [TestCase("new[] { typeof(Generic<>) }")]
+    public void Generate_InvalidArgumentTypes_ReportsDiagnostic(string types)
     {
-        var result = Generate($"[SexprCall(\"not\", ArgumentCount = {count})] public partial record Not : CallExpression;");
+        var result = Generate($"[SexprCall(\"not\", ArgumentTypes = {types})] public partial record Not : CallExpression; public record Generic<T>() : Expression;");
         Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Is.EqualTo(new[] { "DSX007" }));
-        Assert.That(result.GeneratorDiagnostics[0].GetMessage(), Does.Contain("ArgumentCount"));
+        Assert.That(result.GeneratorDiagnostics[0].GetMessage(), Does.Contain("ArgumentTypes"));
         Assert.That(result.GeneratedCount, Is.Zero);
+    }
+
+    [Test]
+    public void Generate_ArgumentTypes_RegistersClosedGenericDependency()
+    {
+        var result = Generate("""
+            [SexprCall("outer", ArgumentTypes = new[] { typeof(Inner<int>) })]
+            public sealed partial record Outer : CallExpression;
+            [SexprCall("inner", ArgumentTypes = new[] { typeof(IntegerExpression) })]
+            public sealed partial record Inner<T> : CallExpression;
+            public static class Probe
+            {
+                public static string Run()
+                {
+                    var options = new SexprSerializerOptions { Resolver = DotSexpr.Generated.DotSexprGeneratedResolver.Instance };
+                    if (options.Resolver.GetFormatter<Inner<int>>() == null)
+                        throw new System.InvalidOperationException("Argument dependency was not registered.");
+                    var value = SexprSerializer.Deserialize<Outer>("(outer (inner 7))", options);
+                    return SexprSerializer.Serialize(value, options);
+                }
+            }
+            """, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(result.GeneratorDiagnostics, Is.Empty);
+        Assert.That(result.CompilerErrors, Is.Empty);
+        using var stream = new MemoryStream();
+        var emitted = result.Compilation.WithAssemblyName("TypedArguments" + Guid.NewGuid().ToString("N")).Emit(stream);
+        Assert.That(emitted.Success, Is.True, string.Join("\n", emitted.Diagnostics));
+        stream.Position = 0;
+        var assembly = AssemblyLoadContext.Default.LoadFromStream(stream);
+        Assert.That(assembly.GetType("Probe")!.GetMethod("Run")!.Invoke(null, null), Is.EqualTo("(outer (inner 7))"));
     }
 
     [Test]
@@ -385,14 +418,19 @@ public class GeneratorTests
         Assert.That(text, Is.EqualTo("(:Model (:Values (1 2)) :Other (:Value 0))"));
     }
 
-    [TestCase(false)]
-    [TestCase(true)]
-    public void Generate_ExternalUnionWithInternalCase_UsesPublicFormatter(bool allowUnknownCalls)
+    [TestCase(false, false)]
+    [TestCase(true, false)]
+    [TestCase(false, true)]
+    [TestCase(true, true)]
+    public void Generate_ExternalUnionWithInternalCase_UsesPublicFormatter(bool allowUnknownCalls, bool typedArguments)
     {
         var model = Generate($$"""
             [SexprCallUnion(typeof(InternalMove), AllowUnknownCalls = {{(allowUnknownCalls ? "true" : "false")}})]
             public abstract partial record ExternalAction : CallExpression;
-            [SexprCall("move", ArgumentCount = 1)] internal sealed partial record InternalMove : ExternalAction;
+            [SexprCall("move", ArgumentTypes = new[] { typeof({{(typedArguments ? "InternalStep" : "Expression")}}) })]
+            internal sealed partial record InternalMove : ExternalAction;
+            [SexprCall("step", ArgumentTypes = new[] { typeof(IntegerExpression) })]
+            internal sealed partial record InternalStep : CallExpression;
             """, language: LanguageVersion.CSharp9, warningsAsErrors: true);
         Assert.That(model.GeneratorDiagnostics, Is.Empty);
         Assert.That(model.CompilerErrors, Is.Empty);
@@ -428,8 +466,10 @@ public class GeneratorTests
         Assert.That(emitted.Success, Is.True, string.Join("\n", emitted.Diagnostics));
         consumerStream.Position = 0;
         var assembly = AssemblyLoadContext.Default.LoadFromStream(consumerStream);
-        var actions = allowUnknownCalls ? "((move 1) (custom (move 2)))" : "((move 1))";
-        var input = $"(:Action (move (move 3)) :Actions {actions})";
+        var actions = typedArguments
+            ? (allowUnknownCalls ? "((move (step 1)) (custom (move (step 2))))" : "((move (step 1)))")
+            : (allowUnknownCalls ? "((move 1) (custom (move 2)))" : "((move 1))");
+        var input = $"(:Action {(typedArguments ? "(move (step 3))" : "(move (move 3))")} :Actions {actions})";
         var output = assembly.GetType("Probe")!.GetMethod("Run")!.Invoke(null, new object[] { input });
         Assert.That(output, Is.EqualTo(input));
         var error = Assert.Throws<System.Reflection.TargetInvocationException>(() =>

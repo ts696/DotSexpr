@@ -123,19 +123,26 @@ registered through the generated resolver. Typed calls also work in arrays and a
 `[SexprObject]` members. Containing types must be partial; explicit constructors and
 additional instance fields/properties are not supported on `[SexprCall]` records.
 
-Use `ArgumentCount` to require an exact number of arguments, excluding the call name:
+Use `ArgumentTypes` to specify each argument's expression type in order:
 
 ```csharp
-[SexprCall("not", ArgumentCount = 1)]
+[SexprCall("not", ArgumentTypes = new[] { typeof(CallExpression) })]
 public sealed partial record Not : CallExpression;
+
+[SexprCall("repeat", ArgumentTypes = new[] { typeof(IntegerExpression), typeof(CallExpression) })]
+public sealed partial record Repeat : CallExpression;
 ```
 
-`(not (ready ?actor))` is valid; `(not)` and `(not a b)` are rejected. The generated
-formatter checks the count during serialization and deserialization, including when
-used through a union or in a model property, and reports the path to the invalid call.
-The default is `-1` (unconstrained), while `0` requires no arguments. Values below `-1`
-produce a generator diagnostic. Constructed values are checked when serialized, including
-values whose arguments have been changed with `with`.
+`(not (ready ?actor))` and `(repeat 3 (move ?from ?to))` are valid; `(not)`,
+`(not a)`, and `(repeat ?count (move ?from ?to))` are rejected. The array length fixes
+the argument count. Omit `ArgumentTypes` (or set it to `null`) to allow any arguments;
+an empty `new Type[] { }` requires no arguments.
+
+Types must be `Expression` or closed types derived from it. Use `typeof(Expression)`
+for an argument that accepts any expression, or a dedicated call or union type to
+select its formatter. Each argument uses its declared type's formatter in both
+directions, including custom formatters. Invalid values report the argument's path;
+constructed values and values changed with `with` are checked when serialized.
 
 To allow several calls in the same position, register them on a common abstract record:
 
@@ -194,7 +201,7 @@ public abstract partial record ConditionExpression : CallExpression;
 public sealed partial record And : ConditionExpression;
 [SexprCall("or")]
 public sealed partial record Or : ConditionExpression;
-[SexprCall("not", ArgumentCount = 1)]
+[SexprCall("not", ArgumentTypes = new[] { typeof(ConditionExpression) })]
 public sealed partial record Not : ConditionExpression;
 
 [SexprObject]
