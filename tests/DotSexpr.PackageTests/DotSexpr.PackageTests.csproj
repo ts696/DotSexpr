@@ -9,7 +9,7 @@
   </PropertyGroup>
   <!-- CI sets UseNuGetPackage=true to validate the packed artifacts instead of project outputs. -->
   <ItemGroup Condition="'$(UseNuGetPackage)' == 'true'">
-    <PackageReference Include="DotSexpr" Version="0.0.2" />
+    <PackageReference Include="DotSexpr" Version="0.1.0" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseNuGetPackage)' != 'true'">
     <ProjectReference Include="../../src/DotSexpr/DotSexpr.csproj" />

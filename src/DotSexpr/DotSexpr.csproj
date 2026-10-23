@@ -7,7 +7,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-        <Version>0.0.2</Version>
+        <Version>0.1.0</Version>
         <PackageId>DotSexpr</PackageId>
         <Authors>ts696</Authors>
         <Description>An S-expression parser and serializer for .NET Standard 2.1 and .NET 10.</Description>
