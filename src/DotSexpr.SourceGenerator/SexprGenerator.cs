@@ -426,6 +426,14 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 Report(output, InvalidResolverType, concreteModels[0], type.ToDisplayString(), "a closed type is required");
                 return;
             }
+            // Custom leaf types are resolved by the caller's formatter resolver. Only types
+            // referenced by generated registration entries need assembly-level accessibility.
+            if (type is not IArrayTypeSymbol { IsSZArray: true } &&
+                !(type is INamedTypeSymbol dependency && dependency.GetAttributes().Any(a =>
+                    a.AttributeClass?.ToDisplayString() is ObjectAttribute or CallAttribute or CallUnionAttribute)))
+            {
+                continue;
+            }
             if (!compilation.IsSymbolAccessibleWithin(type, compilation.Assembly))
             {
                 Report(output, InvalidResolverType, concreteModels[0], type.ToDisplayString(),

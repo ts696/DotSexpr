@@ -191,6 +191,52 @@ public class GeneratorTests
         Assert.That(result.GeneratedCount, Is.Zero);
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void Generate_PrivateCustomArgument_UsesCustomFormatter(bool generic)
+    {
+        var payload = generic ? "Payload<string>" : "Payload";
+        var result = Generate($$"""
+            public partial class Host
+            {
+                {{(generic ? "private sealed record Payload<T>(T Value) : Expression;" : "private sealed record Payload(string Value) : Expression;")}}
+
+                [SexprCall("custom", ArgumentTypes = new[] { typeof({{payload}}) })]
+                public sealed partial record Call : CallExpression;
+
+                private sealed class CustomResolver : ISexprFormatterResolver, ISexprFormatter<{{payload}}>
+                {
+                    public ISexprFormatter<T>? GetFormatter<T>() => typeof(T) == typeof({{payload}})
+                        ? (ISexprFormatter<T>)(object)this
+                        : DotSexpr.Generated.DotSexprGeneratedResolver.Instance.GetFormatter<T>();
+
+                    public {{payload}} Deserialize(in DotSexpr.SNode node, SexprSerializerOptions options) =>
+                        new {{payload}}(node.GetSymbol());
+
+                    public void Serialize(ref DotSexpr.Emitter.SexprEmitter emitter, {{payload}} value,
+                        SexprSerializerOptions options) => emitter.WriteSymbol(value.Value);
+                }
+
+                public static string Run()
+                {
+                    var options = new SexprSerializerOptions { Resolver = new CustomResolver() };
+                    var call = SexprSerializer.Deserialize<Call>("(custom x)", options);
+                    if (call.Arguments[0] is not {{payload}} item || item.Value != "x")
+                        throw new System.InvalidOperationException("The custom argument formatter was not used.");
+                    return SexprSerializer.Serialize(call, options);
+                }
+            }
+            """, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(result.GeneratorDiagnostics, Is.Empty);
+        Assert.That(result.CompilerErrors, Is.Empty);
+        using var stream = new MemoryStream();
+        var emitted = result.Compilation.WithAssemblyName("PrivateArguments" + Guid.NewGuid().ToString("N")).Emit(stream);
+        Assert.That(emitted.Success, Is.True, string.Join("\n", emitted.Diagnostics));
+        stream.Position = 0;
+        var assembly = AssemblyLoadContext.Default.LoadFromStream(stream);
+        Assert.That(assembly.GetType("Host")!.GetMethod("Run")!.Invoke(null, null), Is.EqualTo("(custom x)"));
+    }
+
     [Test]
     public void Generate_ArgumentTypes_RegistersClosedGenericDependency()
     {
