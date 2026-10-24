@@ -31,6 +31,18 @@ if (SexprSerializer.Serialize(condition) != conditionText)
 {
     throw new InvalidOperationException("The packaged generator did not serialize a call union.");
 }
+var repeat = Load<Repeat>("(repeat 3 (move ?from ?to))");
+if (repeat.Arguments[0] is not IntegerExpression { Value: 3 } ||
+    repeat.Arguments[1] is not CallExpression { Name: "move" } ||
+    SexprSerializer.Serialize(repeat) != "(repeat 3 (move ?from ?to))")
+{
+    throw new InvalidOperationException("The packaged generator did not apply argument types.");
+}
+var changed = repeat with { Count = new IntegerExpression(4), Actions = [] };
+if (SexprSerializer.Serialize(changed) != "(repeat 4)")
+{
+    throw new InvalidOperationException("The packaged generator did not use constructor-bound properties.");
+}
 foreach (var assembly in new[] { "DotSexpr.SourceGenerator.dll", "Microsoft.CodeAnalysis.dll", "Microsoft.CodeAnalysis.CSharp.dll" })
 {
     if (File.Exists(Path.Combine(AppContext.BaseDirectory, assembly)))
@@ -59,7 +71,10 @@ public partial class Person
 public abstract partial record Condition : CallExpression;
 
 [SexprCall("and")]
-public sealed partial record And : Condition;
+public sealed partial record And(params Condition[] Operands) : Condition;
 
-[SexprCall("not", ArgumentCount = 1)]
-public sealed partial record Not : Condition;
+[SexprCall("not")]
+public sealed partial record Not(Condition Operand) : Condition;
+
+[SexprCall("repeat")]
+public sealed partial record Repeat(IntegerExpression Count, params CallExpression[] Actions) : CallExpression;

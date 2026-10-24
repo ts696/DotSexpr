@@ -30,15 +30,16 @@ public class ExpressionFormatter : ISexprFormatter<Expression>
                     exception.PrependIndex(0);
                     throw;
                 }
-                if (call.Arguments == null)
+                var arguments = call.Arguments;
+                if (arguments == null)
                 {
                     throw SexprSerializerException.ForSerialization("Call arguments cannot be null.");
                 }
-                for (var i = 0; i < call.Arguments.Count; i++)
+                for (var i = 0; i < arguments.Count; i++)
                 {
                     try
                     {
-                        SexprSerializer.Serialize(ref emitter, call.Arguments[i], options);
+                        SexprSerializer.Serialize(ref emitter, arguments[i], options);
                     }
                     catch (SexprSerializerException exception)
                     {
@@ -98,22 +99,10 @@ public class ExpressionFormatter : ISexprFormatter<Expression>
         return first.GetSymbol();
     }
 
-    internal static CallExpression DeserializeCall(in SNode node, SexprSerializerOptions options, string? expectedName = null,
-        int argumentCount = -1)
+    internal static CallExpression DeserializeCall(in SNode node, SexprSerializerOptions options)
     {
         var name = ReadCallName(in node);
-        if (expectedName != null && !string.Equals(name, expectedName, StringComparison.Ordinal))
-        {
-            var error = new SexprSerializerException($"Expected call name '{expectedName}', but found '{name}'.", node[0]);
-            error.PrependIndex(0);
-            throw error;
-        }
         var actualCount = node.Count - 1;
-        if (argumentCount >= 0 && actualCount != argumentCount)
-        {
-            throw new SexprSerializerException(
-                $"Call '{name}' requires exactly {argumentCount} argument(s), but found {actualCount}.", node);
-        }
         var arguments = new Expression[actualCount];
         var index = 0;
         try

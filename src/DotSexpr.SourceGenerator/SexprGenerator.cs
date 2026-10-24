@@ -95,7 +95,8 @@ public sealed class SexprGenerator : IIncrementalGenerator
         }
         var callAttribute = type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == CallAttribute);
         var callName = callAttribute?.ConstructorArguments.FirstOrDefault().Value as string;
-        var argumentCount = callAttribute?.NamedArguments.FirstOrDefault(a => a.Key == "ArgumentCount").Value.Value as int? ?? -1;
+        var constructorParameters = callAttribute == null ? null : GetCallParameters(type);
+        var argumentTypes = GetCallParameterTypes(type);
         var unionCases = new List<(INamedTypeSymbol Type, string Name)>();
         if (unionAttribute != null)
         {
@@ -140,10 +141,10 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 (type.BaseType?.ToDisplayString() != "DotSexpr.Serializer.CallExpression" &&
                     type.BaseType?.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == CallUnionAttribute) != true) ||
                 type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == ObjectAttribute) ||
-                HasCallMembersOrConstructors(type))
+                constructorParameters == null || HasInvalidConstructorCallMembers(type, constructorParameters))
             {
                 Report(output, InvalidCall, type, type.Name,
-                    "use a partial record derived from CallExpression or a SexprCallUnion, without SexprObject, constructors or instance fields/properties");
+                    "use a positional partial record derived from CallExpression or a SexprCallUnion; specify () for no arguments or params Expression[] for arbitrary arguments; additional constructors, instance fields/properties and reserved Name/Arguments members are unsupported");
                 return null;
             }
             if (!IsCallName(callName))
@@ -151,9 +152,18 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 Report(output, InvalidCall, type, type.Name, "the name must be a valid, non-numeric symbol");
                 return null;
             }
-            if (argumentCount < -1)
+            if (constructorParameters.Any(p => p.RefKind != RefKind.None || p.HasExplicitDefaultValue ||
+                (p.IsParams && (p.Ordinal != constructorParameters.Length - 1 || p.Type is not IArrayTypeSymbol { IsSZArray: true }))))
             {
-                Report(output, InvalidCall, type, type.Name, "ArgumentCount must be -1 (unconstrained) or a non-negative integer");
+                Report(output, InvalidCall, type, type.Name,
+                    "positional calls use required Expression parameters and an optional trailing params Expression-derived array");
+                return null;
+            }
+            if (argumentTypes != null && argumentTypes.Any(t => t == null ||
+                (t is INamedTypeSymbol named && named.IsUnboundGenericType) || !IsExpressionType(t)))
+            {
+                Report(output, InvalidCall, type, type.Name,
+                    "constructor parameters must be Expression types or derived types; only a trailing params array is supported");
                 return null;
             }
         }
@@ -193,7 +203,8 @@ public sealed class SexprGenerator : IIncrementalGenerator
         var formatterName = "@" + type.Name + "GeneratedFormatter";
         if (unionAttribute != null)
         {
-            code.Append("protected @").Append(type.Name)
+            code.Append("protected @").Append(type.Name).AppendLine("() { }")
+                .Append("protected @").Append(type.Name)
                 .AppendLine("(string name, global::System.Collections.Generic.IReadOnlyList<global::DotSexpr.Serializer.Expression> arguments) : base(name, arguments) { }");
             if (allowUnknownCalls)
             {
@@ -227,20 +238,7 @@ public sealed class SexprGenerator : IIncrementalGenerator
         }
         else if (callAttribute != null)
         {
-            code.Append("public @").Append(type.Name).AppendLine("() : this(global::System.Array.Empty<global::DotSexpr.Serializer.Expression>()) { }")
-                .Append("public @").Append(type.Name)
-                .Append("(global::System.Collections.Generic.IReadOnlyList<global::DotSexpr.Serializer.Expression> arguments) : base(")
-                .Append(SymbolDisplay.FormatLiteral(callName!, true)).AppendLine(", arguments) { }")
-                .Append("public sealed class ").Append(formatterName)
-                .Append(" : global::DotSexpr.Serializer.Formatters.CallExpressionFormatter<").Append(fullName).AppendLine("> {")
-                .Append("public ").Append(formatterName).Append("() : base(")
-                .Append(SymbolDisplay.FormatLiteral(callName!, true)).Append(", arguments => new ")
-                .Append(fullName).Append("(arguments)) {");
-            if (argumentCount >= 0)
-            {
-                code.Append("ArgumentCount = ").Append(argumentCount).AppendLine(";");
-            }
-            code.AppendLine("}\n}");
+            GenerateConstructorCall(code, type, callName!, constructorParameters!, argumentTypes!);
         }
         else
         {
@@ -295,6 +293,80 @@ public sealed class SexprGenerator : IIncrementalGenerator
         return members;
     }
 
+    private static void AppendArgument(StringBuilder code, ITypeSymbol type)
+    {
+        code.Append("Argument<").Append(type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(">(");
+        if (type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() is CallAttribute or CallUnionAttribute))
+        {
+            // Delay construction so recursive schemas do not recursively construct formatters.
+            code.Append("() => new ").Append(type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+                .Append(".@").Append(type.Name).Append("GeneratedFormatter()");
+        }
+        else if (type is ITypeParameterSymbol)
+        {
+            // A closed generic schema may reference internal types owned by this assembly.
+            code.Append("() => global::DotSexpr.Generated.DotSexprGeneratedResolver.Instance.GetFormatter<")
+                .Append(type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).Append(">()");
+        }
+        code.Append(')');
+    }
+
+    private static void GenerateConstructorCall(StringBuilder code, INamedTypeSymbol type, string name,
+        IParameterSymbol[] parameters, ITypeSymbol?[] argumentTypes)
+    {
+        var fullName = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var rest = parameters.LastOrDefault()?.IsParams == true;
+        var fixedCount = parameters.Length - (rest ? 1 : 0);
+        code.Append("protected override string GetCallName() => ").Append(SymbolDisplay.FormatLiteral(name, true)).AppendLine(";")
+            .AppendLine("protected override global::System.Collections.Generic.IReadOnlyList<global::DotSexpr.Serializer.Expression> GetCallArguments() =>");
+        if (rest) code.Append("global::DotSexpr.Serializer.CallExpression.CombineCallArguments(");
+        if (fixedCount == 0)
+        {
+            code.Append("global::System.Array.Empty<global::DotSexpr.Serializer.Expression>()");
+        }
+        else
+        {
+            code.Append("new global::DotSexpr.Serializer.Expression[] { ");
+            for (var i = 0; i < fixedCount; i++)
+            {
+                if (i > 0) code.Append(", ");
+                code.Append("this.@").Append(parameters[i].Name);
+            }
+            code.Append(" }");
+        }
+        if (rest) code.Append(", this.@").Append(parameters[parameters.Length - 1].Name).Append(')');
+        code.AppendLine(";")
+            .AppendLine("protected override void SetCallArguments(global::System.Collections.Generic.IReadOnlyList<global::DotSexpr.Serializer.Expression> arguments) => throw new global::System.InvalidOperationException(\"Set the constructor-bound properties instead of Arguments.\");")
+            .Append("public sealed class @").Append(type.Name).Append("GeneratedFormatter : global::DotSexpr.Serializer.Formatters.CallExpressionFormatter<")
+            .Append(fullName).AppendLine("> {")
+            .Append("public @").Append(type.Name).Append("GeneratedFormatter() : base(")
+            .Append(SymbolDisplay.FormatLiteral(name, true)).Append(", arguments => new ").Append(fullName).Append('(');
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            if (i > 0) code.Append(", ");
+            var typeName = argumentTypes[i]!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            if (parameters[i].IsParams)
+                code.Append("RestArguments<").Append(typeName).Append(">(arguments, ").Append(i).Append(')');
+            else
+                code.Append('(').Append(typeName).Append(")arguments[").Append(i).Append(']');
+        }
+        code.AppendLine(")) {")
+            .Append("SetFixedArguments(");
+        for (var i = 0; i < fixedCount; i++)
+        {
+            if (i > 0) code.Append(", ");
+            AppendArgument(code, argumentTypes[i]!);
+        }
+        code.AppendLine(");");
+        if (rest)
+        {
+            code.Append("SetRestArgumentType(");
+            AppendArgument(code, argumentTypes[argumentTypes.Length - 1]!);
+            code.AppendLine(");");
+        }
+        code.AppendLine("}\n}");
+    }
+
     private static void GenerateResolver(SourceProductionContext output,
         Dictionary<INamedTypeSymbol, List<(ISymbol Symbol, ITypeSymbol Type, string Tag)>> models,
         Compilation compilation)
@@ -326,6 +398,14 @@ public sealed class SexprGenerator : IIncrementalGenerator
             {
                 Report(output, InvalidResolverType, concreteModels[0], type.ToDisplayString(), "a closed type is required");
                 return;
+            }
+            // Custom leaf types are resolved by the caller's formatter resolver. Only types
+            // referenced by generated registration entries need assembly-level accessibility.
+            if (type is not IArrayTypeSymbol { IsSZArray: true } &&
+                !(type is INamedTypeSymbol dependency && dependency.GetAttributes().Any(a =>
+                    a.AttributeClass?.ToDisplayString() is ObjectAttribute or CallAttribute or CallUnionAttribute)))
+            {
+                continue;
             }
             if (!compilation.IsSymbolAccessibleWithin(type, compilation.Assembly))
             {
@@ -362,6 +442,19 @@ public sealed class SexprGenerator : IIncrementalGenerator
                     foreach (var unionType in GetUnionTypes(named))
                     {
                         if (unionType != null) pending.Enqueue(unionType);
+                    }
+                    foreach (var argumentType in GetCallParameterTypes(named) ?? Array.Empty<ITypeSymbol?>())
+                    {
+                        if (argumentType != null) pending.Enqueue(argumentType);
+                    }
+                }
+                else if (named.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == CallAttribute))
+                {
+                    // External constructor syntax is unavailable, but its closed generic arguments
+                    // are consumer-visible dependencies. Keep external union cases private.
+                    for (var scope = named; scope != null; scope = scope.ContainingType)
+                    {
+                        foreach (var argumentType in scope.TypeArguments) pending.Enqueue(argumentType);
                     }
                 }
                 if (named.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == CallUnionAttribute &&
@@ -425,6 +518,24 @@ public sealed class SexprGenerator : IIncrementalGenerator
         type.InstanceConstructors.Any(c => !c.IsImplicitlyDeclared) ||
         type.GetMembers().Any(m => !m.IsImplicitlyDeclared && !m.IsStatic && m is IPropertySymbol or IFieldSymbol);
 
+    private static IParameterSymbol[]? GetCallParameters(INamedTypeSymbol type)
+    {
+        var syntax = type.DeclaringSyntaxReferences.Select(r => r.GetSyntax())
+            .OfType<RecordDeclarationSyntax>().FirstOrDefault(r => r.ParameterList != null);
+        if (syntax?.ParameterList == null) return null;
+        var names = syntax.ParameterList.Parameters.Select(p => p.Identifier.ValueText).ToArray();
+        return type.InstanceConstructors.FirstOrDefault(c =>
+            c.DeclaringSyntaxReferences.Any(r => r.GetSyntax() is RecordDeclarationSyntax { ParameterList: not null }) &&
+            c.Parameters.Select(p => p.Name).SequenceEqual(names))?.Parameters.ToArray();
+    }
+
+    private static bool HasInvalidConstructorCallMembers(INamedTypeSymbol type, IParameterSymbol[] parameters) =>
+        type.InstanceConstructors.Any(c => c.DeclaringSyntaxReferences.Any(r => r.GetSyntax() is ConstructorDeclarationSyntax)) ||
+        parameters.Any(p => p.Name is "Name" or "Arguments" or "GetCallName" or "GetCallArguments" or "SetCallArguments") ||
+        type.GetMembers().Any(m => !m.IsImplicitlyDeclared && !m.IsStatic &&
+            ((m is IPropertySymbol or IFieldSymbol && !m.DeclaringSyntaxReferences.Any(r => r.GetSyntax() is ParameterSyntax)) ||
+                m.Name is "GetCallName" or "GetCallArguments" or "SetCallArguments"));
+
     private static IEnumerable<INamedTypeSymbol?> GetUnionTypes(INamedTypeSymbol type)
     {
         var attribute = type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == CallUnionAttribute);
@@ -432,6 +543,27 @@ public sealed class SexprGenerator : IIncrementalGenerator
         {
             foreach (var item in types.Values) yield return item.Value as INamedTypeSymbol;
         }
+    }
+
+    private static ITypeSymbol?[]? GetCallParameterTypes(INamedTypeSymbol type)
+    {
+        var parameters = GetCallParameters(type);
+        return parameters?.Select(p => p.IsParams ? (p.Type as IArrayTypeSymbol)?.ElementType : p.Type).ToArray();
+    }
+
+    private static bool IsExpressionType(ITypeSymbol type) =>
+        IsExpressionType(type, new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default));
+
+    private static bool IsExpressionType(ITypeSymbol type, HashSet<ITypeSymbol> seen)
+    {
+        if (type is ITypeParameterSymbol parameter)
+            return seen.Add(type) && parameter.ConstraintTypes.Any(t => IsExpressionType(t, seen));
+        for (var current = type as INamedTypeSymbol; current != null; current = current.BaseType)
+        {
+            if (!seen.Add(current)) return false;
+            if (current.ToDisplayString() == "DotSexpr.Serializer.Expression") return true;
+        }
+        return false;
     }
 
     private static bool IsCallName(string? name)
