@@ -117,16 +117,14 @@ var created = new Move(new Expression[]
 string text = SexprSerializer.Serialize(created); // (move ?from ?to 10 0.5)
 
 [SexprCall("move")]
-public sealed partial record Move : CallExpression;
+public sealed partial record Move(params Expression[] Items) : CallExpression;
 ```
 
-For records without positional parameters, the generator creates an empty constructor,
-an arguments constructor, and a formatter registered through the generated resolver.
-Typed calls also work in arrays and as `[SexprObject]` members. Containing types must
-be partial.
+The generator creates a formatter registered through the generated resolver. Typed
+calls also work in arrays and as `[SexprObject]` members. Containing types must be partial.
 
-To define arguments through the constructor, use a positional record. The call name
-appears only in `[SexprCall]`:
+Define arguments through the positional record's constructor. The call name appears
+only in `[SexprCall]`:
 
 ```csharp
 [SexprCall("not")]
@@ -137,41 +135,29 @@ public sealed partial record And(params CallExpression[] Operands) : CallExpress
 
 [SexprCall("repeat")]
 public sealed partial record Repeat(IntegerExpression Count, params CallExpression[] Actions) : CallExpression;
+
+[SexprCall("step")]
+public sealed partial record Step() : CallExpression;
 ```
 
 Each ordinary parameter is one required argument. A trailing `params T[]` accepts
 zero or more arguments of type `T`, so `(and)`, `(and (ready x) (visited y))`, and
-`(repeat 3 (move x) (inspect x))` are valid. An empty positional constructor `Zero()`
-requires no arguments. Parameters must derive from `Expression`, or be `Expression`
+`(repeat 3 (move x) (inspect x))` are valid. An empty positional constructor such as
+`Step()` requires no arguments. Use `params Expression[]` to accept arbitrary expressions.
+Parameters must derive from `Expression`, or be `Expression`
 itself; optional parameters, additional constructors and instance fields/properties
 are not supported.
 
 The formatter calls the positional constructor when reading. `Name` is generated from
 the attribute, and `Arguments` reflects the positional properties. Update those
 properties directly or through `with`; assigning `Arguments` on a positional call
-throws `InvalidOperationException`. Do not specify `ArgumentTypes` on a positional record.
+throws `InvalidOperationException`.
 
-For records without positional parameters, use `ArgumentTypes` to specify each
-argument's expression type in order:
-
-```csharp
-[SexprCall("not", ArgumentTypes = new[] { typeof(CallExpression) })]
-public sealed partial record Not : CallExpression;
-
-[SexprCall("repeat", ArgumentTypes = new[] { typeof(IntegerExpression), typeof(CallExpression) })]
-public sealed partial record Repeat : CallExpression;
-```
-
-`(not (ready ?actor))` and `(repeat 3 (move ?from ?to))` are valid; `(not)`,
-`(not a)`, and `(repeat ?count (move ?from ?to))` are rejected. The array length fixes
-the argument count. Omit `ArgumentTypes` (or set it to `null`) to allow any arguments;
-an empty `new Type[] { }` requires no arguments.
-
-Types must be `Expression` or closed types derived from it. Use `typeof(Expression)`
-for an argument that accepts any expression, or a dedicated call or union type to
-select its formatter. Each argument uses its declared type's formatter in both
-directions, including custom formatters. Invalid values report the argument's path;
-constructed values and values changed with `with` are checked when serialized.
+Each argument uses its declared type's formatter in both directions, including
+dedicated calls, unions, and custom formatters. Invalid values report the argument's
+path; constructed values and values changed with `with` are checked when serialized.
+All `[SexprCall]` records must declare a positional parameter list, including `()`
+for calls without arguments.
 
 Names are case-sensitive and read-only, including on ordinary `CallExpression` values.
 Arguments remain expressions and may contain calls with other names. Deserializing as
@@ -191,13 +177,13 @@ ActionExpression[] actions = SexprSerializer.Deserialize<ActionExpression[]>(
 public abstract partial record ActionExpression : CallExpression;
 
 [SexprCall("move")]
-public sealed partial record Move : ActionExpression;
+public sealed partial record Move(params Expression[] Items) : ActionExpression;
 
 [SexprCall("jump")]
-public sealed partial record Jump : ActionExpression;
+public sealed partial record Jump(params Expression[] Items) : ActionExpression;
 
 [SexprCall("step")]
-public sealed partial record Step : ActionExpression;
+public sealed partial record Step() : ActionExpression;
 ```
 
 Union types must be non-generic abstract partial records directly derived from
