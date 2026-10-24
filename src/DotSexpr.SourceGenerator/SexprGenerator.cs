@@ -467,6 +467,15 @@ public sealed class SexprGenerator : IIncrementalGenerator
                         if (argumentType != null) pending.Enqueue(argumentType);
                     }
                 }
+                else if (named.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == CallAttribute))
+                {
+                    // External constructor syntax is unavailable, but its closed generic arguments
+                    // are consumer-visible dependencies. Keep external union cases private.
+                    for (var scope = named; scope != null; scope = scope.ContainingType)
+                    {
+                        foreach (var argumentType in scope.TypeArguments) pending.Enqueue(argumentType);
+                    }
+                }
                 if (named.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == CallUnionAttribute &&
                     a.NamedArguments.Any(p => p.Key == "AllowUnknownCalls" && p.Value.Value is true)))
                 {

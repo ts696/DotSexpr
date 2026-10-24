@@ -153,7 +153,14 @@ public class CallExpressionFormatter<T>(string name, Func<IReadOnlyList<Expressi
             var formatter = options.Resolver.GetFormatter<TArgument>() ?? fallback?.Invoke();
             if (formatter == null)
                 throw SexprSerializerException.ForSerialization($"No formatter is available for '{typeof(TArgument)}'.");
-            formatter.Serialize(ref emitter, argument, options);
+            try
+            {
+                formatter.Serialize(ref emitter, argument, options);
+            }
+            catch (SexprSerializerException exception) when (exception.Path == null)
+            {
+                throw SexprSerializerException.ForSerialization(exception.Message, exception);
+            }
         }
     }
 }

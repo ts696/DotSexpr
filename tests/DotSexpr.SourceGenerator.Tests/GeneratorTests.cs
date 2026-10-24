@@ -451,6 +451,79 @@ public class GeneratorTests
         Assert.That(text, Is.EqualTo("(:Model (:Values (1 2)) :Other (:Value 0))"));
     }
 
+    [TestCase(0, false)]
+    [TestCase(0, true)]
+    [TestCase(1, false)]
+    [TestCase(1, true)]
+    [TestCase(2, false)]
+    [TestCase(2, true)]
+    public void Generate_ExternalGenericCall_RegistersClosedArgumentDependencies(int shape, bool isolatedResolver)
+    {
+        var model = Generate("""
+            [SexprCall("box")]
+            public sealed partial record Box<T>(T Item) : CallExpression where T : Expression;
+            public partial class Holder<T> where T : Expression
+            {
+                [SexprCall("box")]
+                public sealed partial record Bound(T Item) : CallExpression;
+            }
+            [SexprCallUnion(typeof(Ready))]
+            public abstract partial record ExternalCondition : CallExpression;
+            [SexprCall("ready")]
+            internal sealed partial record Ready(IntegerExpression Value) : ExternalCondition;
+            public static class ModelSerialization
+            {
+                public static void Initialize() => DotSexpr.Serializer.Resolvers.DefaultResolver.Register(
+                    DotSexpr.Generated.DotSexprGeneratedResolver.Instance);
+            }
+            """, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(model.GeneratorDiagnostics, Is.Empty);
+        Assert.That(model.CompilerErrors, Is.Empty);
+        using var modelStream = new MemoryStream();
+        var emitted = model.Compilation.WithAssemblyName("GenericCallModels" + Guid.NewGuid().ToString("N")).Emit(modelStream);
+        Assert.That(emitted.Success, Is.True, string.Join("\n", emitted.Diagnostics));
+        var type = shape switch
+        {
+            0 => "Box<Box<IntegerExpression>>",
+            1 => "Holder<Box<IntegerExpression>>.Bound",
+            _ => "Box<ExternalCondition>"
+        };
+        var consumer = Generate($$"""
+            [SexprObject] public partial class Document
+            {
+                public {{type}} Value { get; set; } = null!;
+            }
+            public static class Probe
+            {
+                public static string Run(string text)
+                {
+                    ModelSerialization.Initialize();
+                    var options = new SexprSerializerOptions
+                    {
+                        Resolver = {{(isolatedResolver
+                            ? "DotSexpr.Generated.DotSexprGeneratedResolver.Instance"
+                            : "DotSexpr.Serializer.Resolvers.DefaultResolver.Instance")}}
+                    };
+                    var document = SexprSerializer.Deserialize<Document>(text, options);
+                    return SexprSerializer.Serialize(document, options);
+                }
+            }
+            """, MetadataReference.CreateFromImage(modelStream.ToArray()),
+            language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(consumer.GeneratorDiagnostics, Is.Empty);
+        Assert.That(consumer.CompilerErrors, Is.Empty);
+        modelStream.Position = 0;
+        AssemblyLoadContext.Default.LoadFromStream(modelStream);
+        using var consumerStream = new MemoryStream();
+        emitted = consumer.Compilation.WithAssemblyName("GenericCallConsumer" + Guid.NewGuid().ToString("N")).Emit(consumerStream);
+        Assert.That(emitted.Success, Is.True, string.Join("\n", emitted.Diagnostics));
+        consumerStream.Position = 0;
+        var assembly = AssemblyLoadContext.Default.LoadFromStream(consumerStream);
+        var input = shape == 2 ? "(:Value (box (ready 1)))" : "(:Value (box (box 1)))";
+        var output = assembly.GetType("Probe")!.GetMethod("Run")!.Invoke(null, new object[] { input });
+        Assert.That(output, Is.EqualTo(input));
+    }
+
     [TestCase(false, false, false)]
     [TestCase(true, false, false)]
     [TestCase(false, true, false)]
