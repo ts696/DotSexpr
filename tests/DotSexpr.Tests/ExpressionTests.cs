@@ -8,7 +8,7 @@ namespace DotSexpr.Tests;
 public partial class ExpressionTests
 {
     [SexprCall("move")]
-    public sealed partial record Move : CallExpression;
+    public sealed partial record Move(params Expression[] Items) : CallExpression;
 
     [SexprObject]
     public partial class Plan
@@ -91,7 +91,7 @@ public partial class ExpressionTests
         Assert.That(SexprSerializer.Serialize(move), Is.EqualTo(text));
         Assert.That(SexprSerializer.Serialize<Expression>(move), Is.EqualTo(text));
         Assert.That(SexprSerializer.Serialize(new Move()), Is.EqualTo("(move)"));
-        Assert.That(SexprSerializer.Serialize(move with { Arguments = [new IntegerExpression(3)] }),
+        Assert.That(SexprSerializer.Serialize(move with { Items = [new IntegerExpression(3)] }),
             Is.EqualTo("(move 3)"));
     }
 

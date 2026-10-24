@@ -96,7 +96,7 @@ public sealed class SexprGenerator : IIncrementalGenerator
         var callAttribute = type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == CallAttribute);
         var callName = callAttribute?.ConstructorArguments.FirstOrDefault().Value as string;
         var constructorParameters = callAttribute == null ? null : GetCallParameters(type);
-        var argumentTypes = GetArgumentTypes(type);
+        var argumentTypes = GetCallParameterTypes(type);
         var unionCases = new List<(INamedTypeSymbol Type, string Name)>();
         if (unionAttribute != null)
         {
@@ -141,10 +141,10 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 (type.BaseType?.ToDisplayString() != "DotSexpr.Serializer.CallExpression" &&
                     type.BaseType?.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == CallUnionAttribute) != true) ||
                 type.GetAttributes().Any(a => a.AttributeClass?.ToDisplayString() == ObjectAttribute) ||
-                (constructorParameters == null ? HasCallMembersOrConstructors(type) : HasInvalidConstructorCallMembers(type, constructorParameters)))
+                constructorParameters == null || HasInvalidConstructorCallMembers(type, constructorParameters))
             {
                 Report(output, InvalidCall, type, type.Name,
-                    "use a partial record derived from CallExpression or a SexprCallUnion; positional records cannot have additional constructors, instance fields/properties or reserved Name/Arguments members");
+                    "use a positional partial record derived from CallExpression or a SexprCallUnion; specify () for no arguments or params Expression[] for arbitrary arguments; additional constructors, instance fields/properties and reserved Name/Arguments members are unsupported");
                 return null;
             }
             if (!IsCallName(callName))
@@ -152,22 +152,18 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 Report(output, InvalidCall, type, type.Name, "the name must be a valid, non-numeric symbol");
                 return null;
             }
-            if (constructorParameters != null &&
-                (callAttribute.NamedArguments.Any(a => a.Key == "ArgumentTypes") ||
-                    constructorParameters.Any(p => p.RefKind != RefKind.None || p.HasExplicitDefaultValue ||
-                        (p.IsParams && (p.Ordinal != constructorParameters.Length - 1 || p.Type is not IArrayTypeSymbol { IsSZArray: true })))))
+            if (constructorParameters.Any(p => p.RefKind != RefKind.None || p.HasExplicitDefaultValue ||
+                (p.IsParams && (p.Ordinal != constructorParameters.Length - 1 || p.Type is not IArrayTypeSymbol { IsSZArray: true }))))
             {
                 Report(output, InvalidCall, type, type.Name,
-                    "positional calls use required Expression parameters and an optional trailing params Expression-derived array; do not also specify ArgumentTypes");
+                    "positional calls use required Expression parameters and an optional trailing params Expression-derived array");
                 return null;
             }
             if (argumentTypes != null && argumentTypes.Any(t => t == null ||
                 (t is INamedTypeSymbol named && named.IsUnboundGenericType) || !IsExpressionType(t)))
             {
                 Report(output, InvalidCall, type, type.Name,
-                    constructorParameters == null
-                        ? "ArgumentTypes must contain non-null, closed Expression types or types derived from Expression"
-                        : "constructor parameters must be Expression types or derived types; only a trailing params array is supported");
+                    "constructor parameters must be Expression types or derived types; only a trailing params array is supported");
                 return null;
             }
         }
@@ -240,32 +236,9 @@ public sealed class SexprGenerator : IIncrementalGenerator
             }
             code.AppendLine("}\n}");
         }
-        else if (callAttribute != null && constructorParameters != null)
-        {
-            GenerateConstructorCall(code, type, callName!, constructorParameters, argumentTypes!);
-        }
         else if (callAttribute != null)
         {
-            code.Append("public @").Append(type.Name).AppendLine("() : this(global::System.Array.Empty<global::DotSexpr.Serializer.Expression>()) { }")
-                .Append("public @").Append(type.Name)
-                .Append("(global::System.Collections.Generic.IReadOnlyList<global::DotSexpr.Serializer.Expression> arguments) : base(")
-                .Append(SymbolDisplay.FormatLiteral(callName!, true)).AppendLine(", arguments) { }")
-                .Append("public sealed class ").Append(formatterName)
-                .Append(" : global::DotSexpr.Serializer.Formatters.CallExpressionFormatter<").Append(fullName).AppendLine("> {")
-                .Append("public ").Append(formatterName).Append("() : base(")
-                .Append(SymbolDisplay.FormatLiteral(callName!, true)).Append(", arguments => new ")
-                .Append(fullName).Append("(arguments)) {");
-            if (argumentTypes != null)
-            {
-                code.Append("SetArgumentTypes(");
-                for (var i = 0; i < argumentTypes.Length; i++)
-                {
-                    if (i > 0) code.Append(", ");
-                    AppendArgument(code, argumentTypes[i]!);
-                }
-                code.AppendLine(");");
-            }
-            code.AppendLine("}\n}");
+            GenerateConstructorCall(code, type, callName!, constructorParameters!, argumentTypes!);
         }
         else
         {
@@ -378,7 +351,7 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 code.Append('(').Append(typeName).Append(")arguments[").Append(i).Append(']');
         }
         code.AppendLine(")) {")
-            .Append("SetArgumentTypes(");
+            .Append("SetFixedArguments(");
         for (var i = 0; i < fixedCount; i++)
         {
             if (i > 0) code.Append(", ");
@@ -470,7 +443,7 @@ public sealed class SexprGenerator : IIncrementalGenerator
                     {
                         if (unionType != null) pending.Enqueue(unionType);
                     }
-                    foreach (var argumentType in GetArgumentTypes(named) ?? Array.Empty<ITypeSymbol?>())
+                    foreach (var argumentType in GetCallParameterTypes(named) ?? Array.Empty<ITypeSymbol?>())
                     {
                         if (argumentType != null) pending.Enqueue(argumentType);
                     }
@@ -572,15 +545,10 @@ public sealed class SexprGenerator : IIncrementalGenerator
         }
     }
 
-    private static ITypeSymbol?[]? GetArgumentTypes(INamedTypeSymbol type)
+    private static ITypeSymbol?[]? GetCallParameterTypes(INamedTypeSymbol type)
     {
         var parameters = GetCallParameters(type);
-        if (parameters != null)
-            return parameters.Select(p => p.IsParams ? (p.Type as IArrayTypeSymbol)?.ElementType : p.Type).ToArray();
-        var attribute = type.GetAttributes().FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == CallAttribute);
-        return attribute?.NamedArguments.FirstOrDefault(a => a.Key == "ArgumentTypes").Value is
-            { Kind: TypedConstantKind.Array, IsNull: false } types
-            ? types.Values.Select(item => item.Value as ITypeSymbol).ToArray() : null;
+        return parameters?.Select(p => p.IsParams ? (p.Type as IArrayTypeSymbol)?.ElementType : p.Type).ToArray();
     }
 
     private static bool IsExpressionType(ITypeSymbol type) =>

@@ -22,9 +22,9 @@ public class GeneratorTests
         var result = Generate($$"""
             [SexprCallUnion(typeof(Move), typeof(Jump), typeof(Step), AllowUnknownCalls = {{(allowUnknownCalls ? "true" : "false")}})]
             public abstract partial record ActionExpression : CallExpression;
-            [SexprCall("move")] public sealed partial record Move : ActionExpression;
-            [SexprCall("jump")] public sealed partial record Jump : ActionExpression;
-            [SexprCall("step")] public sealed partial record Step : ActionExpression;
+            [SexprCall("move")] public sealed partial record Move(params Expression[] Items) : ActionExpression;
+            [SexprCall("jump")] public sealed partial record Jump(params Expression[] Items) : ActionExpression;
+            [SexprCall("step")] public sealed partial record Step(params Expression[] Items) : ActionExpression;
             [SexprObject] public partial class Plan
             {
                 public ActionExpression[] Actions { get; set; } = System.Array.Empty<ActionExpression>();
@@ -44,7 +44,7 @@ public class GeneratorTests
             {
                 public class UnknownCall { }
             }
-            [SexprCall("move")] public partial record Move : ActionExpression;
+            [SexprCall("move")] public partial record Move(params Expression[] Items) : ActionExpression;
             """);
         Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Does.Contain("DSX008"));
     }
@@ -70,14 +70,15 @@ public class GeneratorTests
         var result = Generate($$"""
             [SexprCallUnion({{registrations}})]
             public abstract partial record ActionExpression : CallExpression;
-            [SexprCall("move")] public partial record Move : ActionExpression;
-            [SexprCall("move")] public partial record Other : ActionExpression;
-            [SexprCall("other")] public partial record Unrelated : CallExpression;
+            [SexprCall("move")] public partial record Move(params Expression[] Items) : ActionExpression;
+            [SexprCall("move")] public partial record Other(params Expression[] Items) : ActionExpression;
+            [SexprCall("other")] public partial record Unrelated(params Expression[] Items) : CallExpression;
             """);
         Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Does.Contain("DSX008"));
     }
 
     [TestCase("[SexprCall(\"move\")] public record Move : CallExpression;", "DSX001")]
+    [TestCase("[SexprCall(\"move\")] public partial record Move : CallExpression;", "DSX007")]
     [TestCase("[SexprCall(\"move\")] public partial record Move;", "DSX007")]
     [TestCase("[SexprCall(\"move\")] public abstract partial record Move : CallExpression;", "DSX002")]
     [TestCase("[SexprCall(\"move\")] public partial record Move(int X) : CallExpression(\"move\", System.Array.Empty<Expression>());", "DSX007")]
@@ -103,7 +104,7 @@ public class GeneratorTests
     public void Generate_InvalidCallName_ReportsDiagnostic(string name)
     {
         var literal = SymbolDisplay.FormatLiteral(name, true);
-        var result = Generate($"[SexprCall({literal})] public partial record Move : CallExpression;");
+        var result = Generate($"[SexprCall({literal})] public partial record Move(params Expression[] Items) : CallExpression;");
         Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Is.EqualTo(new[] { "DSX007" }));
         Assert.That(result.GeneratedCount, Is.Zero);
     }
@@ -112,33 +113,20 @@ public class GeneratorTests
     public void Generate_InvalidUtf16CallName_ReportsDiagnostic()
     {
         var result = Generate("""
-            [SexprCall("\uD800")] public partial record Move : CallExpression;
+            [SexprCall("\uD800")] public partial record Move(params Expression[] Items) : CallExpression;
             """);
         Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Is.EqualTo(new[] { "DSX007" }));
         Assert.That(result.GeneratedCount, Is.Zero);
     }
 
-    [TestCase("[SexprCall(\"move\")] public sealed partial record Move : CallExpression;")]
-    [TestCase("[SexprCall(\"移動🚀\")] public partial record Move : CallExpression;")]
-    [TestCase("[SexprCall(\"+1\")] public partial record Move : CallExpression;")]
-    [TestCase("[SexprCall(\"move\")] public partial record Move<T> : CallExpression where T : class, new();")]
-    [TestCase("public partial class Outer<T> where T : class { [SexprCall(\"move\")] public partial record Move : CallExpression; }")]
-    [TestCase("namespace A.@event { [SexprCall(\"move\")] public partial record @class : CallExpression; }")]
+    [TestCase("[SexprCall(\"move\")] public sealed partial record Move(params Expression[] Items) : CallExpression;")]
+    [TestCase("[SexprCall(\"移動🚀\")] public partial record Move(params Expression[] Items) : CallExpression;")]
+    [TestCase("[SexprCall(\"+1\")] public partial record Move(params Expression[] Items) : CallExpression;")]
+    [TestCase("[SexprCall(\"move\")] public partial record Move<T>(params Expression[] Items) : CallExpression where T : class, new();")]
+    [TestCase("public partial class Outer<T> where T : class { [SexprCall(\"move\")] public partial record Move(params Expression[] Items) : CallExpression; }")]
+    [TestCase("namespace A.@event { [SexprCall(\"move\")] public partial record @class(params Expression[] Items) : CallExpression; }")]
     public void Generate_Call_CompilesWithCSharp9(string source)
     {
-        var result = Generate(source, language: LanguageVersion.CSharp9, warningsAsErrors: true);
-        Assert.That(result.GeneratorDiagnostics, Is.Empty);
-        Assert.That(result.CompilerErrors, Is.Empty);
-        Assert.That(result.GeneratedCount, Is.EqualTo(2));
-    }
-
-    [TestCase("null")]
-    [TestCase("new System.Type[] { }")]
-    [TestCase("new[] { typeof(Expression) }")]
-    [TestCase("new[] { typeof(IntegerExpression), typeof(NumberExpression), typeof(SymbolExpression), typeof(CallExpression) }")]
-    public void Generate_ArgumentTypes_CompilesWithCSharp9(string types)
-    {
-        var source = $"[SexprCall(\"not\", ArgumentTypes = {types})] public sealed partial record Not : CallExpression;";
         var result = Generate(source, language: LanguageVersion.CSharp9, warningsAsErrors: true);
         Assert.That(result.GeneratorDiagnostics, Is.Empty);
         Assert.That(result.CompilerErrors, Is.Empty);
@@ -161,7 +149,18 @@ public class GeneratorTests
         Assert.That(result.GeneratedCount, Is.EqualTo(2));
     }
 
-    [TestCase("[SexprCall(\"call\", ArgumentTypes = new[] { typeof(Expression) })] public partial record Call(Expression Item) : CallExpression;")]
+    [TestCase("new Not()", "CS7036")]
+    [TestCase("new Not(new SymbolExpression(\"x\"))", "CS1503")]
+    public void Generate_ConstructorCall_RejectsInvalidConstruction(string expression, string diagnostic)
+    {
+        var result = Generate($$"""
+            [SexprCall("not")] public sealed partial record Not(CallExpression Operand) : CallExpression;
+            public static class Usage { public static Not Create() => {{expression}}; }
+            """, language: LanguageVersion.CSharp9);
+        Assert.That(result.GeneratorDiagnostics, Is.Empty);
+        Assert.That(result.CompilerErrors.Select(e => e.Id), Does.Contain(diagnostic));
+    }
+
     [TestCase("[SexprCall(\"call\")] public partial record Call(int Item) : CallExpression;")]
     [TestCase("[SexprCall(\"call\")] public partial record Call(params int[] Items) : CallExpression;")]
     [TestCase("[SexprCall(\"call\")] public partial record Call(Expression[] Items) : CallExpression;")]
@@ -178,19 +177,6 @@ public class GeneratorTests
         Assert.That(result.GeneratedCount, Is.Zero);
     }
 
-    [TestCase("new System.Type[] { null }")]
-    [TestCase("new[] { typeof(int) }")]
-    [TestCase("new[] { typeof(string) }")]
-    [TestCase("new[] { typeof(Expression[]) }")]
-    [TestCase("new[] { typeof(Generic<>) }")]
-    public void Generate_InvalidArgumentTypes_ReportsDiagnostic(string types)
-    {
-        var result = Generate($"[SexprCall(\"not\", ArgumentTypes = {types})] public partial record Not : CallExpression; public record Generic<T>() : Expression;");
-        Assert.That(result.GeneratorDiagnostics.Select(d => d.Id), Is.EqualTo(new[] { "DSX007" }));
-        Assert.That(result.GeneratorDiagnostics[0].GetMessage(), Does.Contain("ArgumentTypes"));
-        Assert.That(result.GeneratedCount, Is.Zero);
-    }
-
     [TestCase(false)]
     [TestCase(true)]
     public void Generate_PrivateCustomArgument_UsesCustomFormatter(bool generic)
@@ -201,14 +187,18 @@ public class GeneratorTests
             {
                 {{(generic ? "private sealed record Payload<T>(T Value) : Expression;" : "private sealed record Payload(string Value) : Expression;")}}
 
-                [SexprCall("custom", ArgumentTypes = new[] { typeof({{payload}}) })]
-                public sealed partial record Call : CallExpression;
+                [SexprCall("custom")]
+                public sealed partial record Call<T>(T Item) : CallExpression where T : Expression;
 
                 private sealed class CustomResolver : ISexprFormatterResolver, ISexprFormatter<{{payload}}>
                 {
-                    public ISexprFormatter<T>? GetFormatter<T>() => typeof(T) == typeof({{payload}})
-                        ? (ISexprFormatter<T>)(object)this
-                        : DotSexpr.Generated.DotSexprGeneratedResolver.Instance.GetFormatter<T>();
+                    public ISexprFormatter<T>? GetFormatter<T>()
+                    {
+                        if (typeof(T) == typeof(Call<{{payload}}>))
+                            return (ISexprFormatter<T>)(object)new Call<{{payload}}>.CallGeneratedFormatter();
+                        return typeof(T) == typeof({{payload}}) ? (ISexprFormatter<T>)(object)this
+                            : DotSexpr.Generated.DotSexprGeneratedResolver.Instance.GetFormatter<T>();
+                    }
 
                     public {{payload}} Deserialize(in DotSexpr.SNode node, SexprSerializerOptions options) =>
                         new {{payload}}(node.GetSymbol());
@@ -220,7 +210,7 @@ public class GeneratorTests
                 public static string Run()
                 {
                     var options = new SexprSerializerOptions { Resolver = new CustomResolver() };
-                    var call = SexprSerializer.Deserialize<Call>("(custom x)", options);
+                    var call = SexprSerializer.Deserialize<Call<{{payload}}>>("(custom x)", options);
                     if (call.Arguments[0] is not {{payload}} item || item.Value != "x")
                         throw new System.InvalidOperationException("The custom argument formatter was not used.");
                     return SexprSerializer.Serialize(call, options);
@@ -238,13 +228,13 @@ public class GeneratorTests
     }
 
     [Test]
-    public void Generate_ArgumentTypes_RegistersClosedGenericDependency()
+    public void Generate_ConstructorCall_RegistersClosedGenericDependency()
     {
         var result = Generate("""
-            [SexprCall("outer", ArgumentTypes = new[] { typeof(Inner<int>) })]
-            public sealed partial record Outer : CallExpression;
-            [SexprCall("inner", ArgumentTypes = new[] { typeof(IntegerExpression) })]
-            public sealed partial record Inner<T> : CallExpression;
+            [SexprCall("outer")]
+            public sealed partial record Outer(Inner<int> Item) : CallExpression;
+            [SexprCall("inner")]
+            public sealed partial record Inner<T>(IntegerExpression Count) : CallExpression;
             public static class Probe
             {
                 public static string Run()
@@ -271,7 +261,7 @@ public class GeneratorTests
     public void Generate_CallName_CannotBeOverriddenWithInitializerOrWithExpression()
     {
         var result = Generate("""
-            [SexprCall("move")] public partial record Move : CallExpression;
+            [SexprCall("move")] public partial record Move(params Expression[] Items) : CallExpression;
             public class Usage
             {
                 public void Test()
@@ -289,7 +279,7 @@ public class GeneratorTests
     public void Generate_Call_RegistersClosedGenericModelMembers()
     {
         var result = Generate("""
-            [SexprCall("move")] public partial record Move<T> : CallExpression where T : class;
+            [SexprCall("move")] public partial record Move<T>(params Expression[] Items) : CallExpression where T : class;
             [SexprObject] public partial class Plan
             {
                 public Move<string>[] Steps { get; set; } = System.Array.Empty<Move<string>>();
@@ -584,7 +574,7 @@ public class GeneratorTests
             public abstract partial record ExternalAction : CallExpression;
             {{(typedArguments
                 ? $"[SexprCall(\"move\")] internal sealed partial record InternalMove({argumentType} Step) : ExternalAction;"
-                : "[SexprCall(\"move\", ArgumentTypes = new[] { typeof(Expression) })] internal sealed partial record InternalMove : ExternalAction;")}}
+                : "[SexprCall(\"move\")] internal sealed partial record InternalMove(Expression Item) : ExternalAction;")}}
             [SexprCall("step")]
             internal sealed partial record InternalStep(IntegerExpression Value) : CallExpression;
             [SexprCall("value")]

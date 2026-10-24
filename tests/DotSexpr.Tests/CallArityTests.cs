@@ -2,19 +2,25 @@ using DotSexpr.Serializer;
 
 namespace DotSexpr.Tests;
 
-public partial class ArgumentTypesTests
+public partial class CallArityTests
 {
     [SexprCallUnion(typeof(Not), typeof(And), typeof(Zero), AllowUnknownCalls = true)]
     public abstract partial record Condition : CallExpression;
 
-    [SexprCall("not", ArgumentTypes = new[] { typeof(Expression) })]
-    public sealed partial record Not : Condition;
+    [SexprCall("not")]
+    public partial record Not(Expression Operand) : Condition;
 
     [SexprCall("and")]
-    public sealed partial record And : Condition;
+    public sealed partial record And(params Expression[] Items) : Condition;
 
-    [SexprCall("zero", ArgumentTypes = new Type[] { })]
-    public sealed partial record Zero : Condition;
+    [SexprCall("zero")]
+    public sealed partial record Zero() : Condition;
+
+    public sealed record MalformedNot(int Count) : Not(new SymbolExpression("x"))
+    {
+        protected override IReadOnlyList<Expression> GetCallArguments() =>
+            Enumerable.Repeat<Expression>(new SymbolExpression("x"), Count).ToArray();
+    }
 
     [SexprObject]
     public partial class Task
@@ -24,7 +30,7 @@ public partial class ArgumentTypesTests
     }
 
     [Test]
-    public void ArgumentTypes_ValidCallsRoundTrip()
+    public void ConstructorArguments_ValidCallsRoundTrip()
     {
         const string text = "(:precondition (and (not (ready ?actor)) (zero) (custom 1 2)))";
         var task = SexprSerializer.Deserialize<Task>(text);
@@ -37,7 +43,7 @@ public partial class ArgumentTypesTests
     [TestCase("(not)", 0)]
     [TestCase("(not x y)", 2)]
     [TestCase("(not \"invalid\" \"invalid\")", 2)]
-    public void ArgumentTypes_InvalidInputFailsBeforeReadingChildren(string text, int actualCount)
+    public void ConstructorArguments_InvalidInputFailsBeforeReadingChildren(string text, int actualCount)
     {
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Deserialize<Not>(text))!;
         Assert.That(error.Path, Is.EqualTo("$"));
@@ -47,12 +53,9 @@ public partial class ArgumentTypesTests
 
     [TestCase(0)]
     [TestCase(2)]
-    public void ArgumentTypes_InvalidOutputFailsForDirectAndNestedCalls(int count)
+    public void ConstructorArguments_InvalidProjectionFailsForDirectAndNestedCalls(int count)
     {
-        var not = new Not([new SymbolExpression("x")]) with
-        {
-            Arguments = Enumerable.Repeat<Expression>(new SymbolExpression("x"), count).ToArray()
-        };
+        Not not = new MalformedNot(count);
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Serialize(not))!;
         Assert.That(error.Path, Is.EqualTo("$"));
         Assert.That(error.Message, Does.Contain("requires exactly 1 argument(s)").And.Contain($"found {count}"));
@@ -64,7 +67,7 @@ public partial class ArgumentTypesTests
 
     [TestCase("(:precondition (and (not)))")]
     [TestCase("(:precondition (custom (not x y)))")]
-    public void ArgumentTypes_NestedInputRetainsCallLocation(string text)
+    public void ConstructorArguments_NestedInputRetainsCallLocation(string text)
     {
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Deserialize<Task>(text))!;
         Assert.That(error.Path, Is.EqualTo("$.precondition[1]"));
@@ -72,16 +75,15 @@ public partial class ArgumentTypesTests
     }
 
     [Test]
-    public void ArgumentTypes_ZeroExcludesTheCallName()
+    public void ConstructorArguments_ZeroExcludesTheCallName()
     {
         Assert.That(SexprSerializer.Serialize(new Zero()), Is.EqualTo("(zero)"));
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Deserialize<Zero>("(zero x)"))!;
         Assert.That(error.Message, Does.Contain("requires exactly 0 argument(s)").And.Contain("found 1"));
-        Assert.Throws<SexprSerializerException>(() => SexprSerializer.Serialize(new Zero([new SymbolExpression("x")])));
     }
 
     [Test]
-    public void ArgumentTypes_OmittedConstraintRemainsUnrestricted()
+    public void ConstructorArguments_ExpressionParamsAllowAnyCount()
     {
         Assert.That(SexprSerializer.Serialize(new And()), Is.EqualTo("(and)"));
         var and = SexprSerializer.Deserialize<And>("(and x y z)");
@@ -90,7 +92,7 @@ public partial class ArgumentTypesTests
     }
 
     [Test]
-    public void ArgumentTypes_NameValidationComesFirst()
+    public void ConstructorArguments_NameValidationComesFirst()
     {
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Deserialize<Not>("(and)"))!;
         Assert.That(error.Path, Is.EqualTo("$[0]"));

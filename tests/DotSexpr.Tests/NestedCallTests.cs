@@ -10,10 +10,10 @@ public partial class NestedCallTests
     public abstract partial record ConditionExpression : CallExpression;
 
     [SexprCall("and")]
-    public sealed partial record And : ConditionExpression;
+    public sealed partial record And(params Expression[] Items) : ConditionExpression;
 
     [SexprCall("or")]
-    public sealed partial record Or : ConditionExpression;
+    public sealed partial record Or(params Expression[] Items) : ConditionExpression;
 
     [SexprObject]
     public partial class Plan

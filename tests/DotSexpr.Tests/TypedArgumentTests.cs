@@ -10,25 +10,25 @@ public partial class TypedArgumentTests
     public abstract partial record Condition : CallExpression;
 
     [SexprCall("and")]
-    public sealed partial record And : Condition;
+    public sealed partial record And(params Expression[] Items) : Condition;
 
-    [SexprCall("not", ArgumentTypes = new[] { typeof(Condition) })]
-    public sealed partial record Not : Condition;
+    [SexprCall("not")]
+    public sealed partial record Not(Condition Operand) : Condition;
 
-    [SexprCall("repeat", ArgumentTypes = new[] { typeof(IntegerExpression), typeof(CallExpression) })]
-    public sealed partial record Repeat : Condition;
+    [SexprCall("repeat")]
+    public sealed partial record Repeat(IntegerExpression Count, CallExpression Action) : Condition;
 
-    [SexprCall("values", ArgumentTypes = new[] { typeof(SymbolExpression), typeof(IntegerExpression), typeof(NumberExpression), typeof(Expression) })]
-    public sealed partial record Values : Condition;
+    [SexprCall("values")]
+    public sealed partial record Values(SymbolExpression Symbol, IntegerExpression Integer, NumberExpression Number, Expression Other) : Condition;
 
-    [SexprCall("with-step", ArgumentTypes = new[] { typeof(Step) })]
-    public sealed partial record WithStep : Condition;
+    [SexprCall("with-step")]
+    public sealed partial record WithStep(Step Step) : Condition;
 
-    [SexprCall("step", ArgumentTypes = new[] { typeof(IntegerExpression) })]
-    public sealed partial record Step : CallExpression;
+    [SexprCall("step")]
+    public sealed partial record Step(IntegerExpression Count) : CallExpression;
 
-    [SexprCall("open", ArgumentTypes = null)]
-    public sealed partial record Open : CallExpression;
+    [SexprCall("open")]
+    public sealed partial record Open(params Expression[] Items) : CallExpression;
 
     [SexprObject]
     public partial class Document
@@ -60,13 +60,12 @@ public partial class TypedArgumentTests
         Assert.That(error.BytePosition, Is.EqualTo(text.IndexOf(value, StringComparison.Ordinal)));
     }
 
-    [TestCase(false)]
-    [TestCase(true)]
-    public void WrongOutputTypeReportsArgumentThroughPropertiesAndArrays(bool nullValue)
+    [Test]
+    public void NullOutputReportsArgumentThroughPropertiesAndArrays()
     {
-        var call = new Repeat([new IntegerExpression(2), new CallExpression("move", [])]) with
+        var call = new Repeat(new IntegerExpression(2), new CallExpression("move", [])) with
         {
-            Arguments = [nullValue ? null! : new SymbolExpression("?count"), new CallExpression("move", [])]
+            Count = null!
         };
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Serialize(call))!;
         Assert.That(error.Path, Is.EqualTo("$[1]"));
@@ -96,9 +95,6 @@ public partial class TypedArgumentTests
         var error = Assert.Throws<SexprSerializerException>(() =>
             SexprSerializer.Deserialize<WithStep>("(with-step (other 7))"))!;
         Assert.That(error.Path, Is.EqualTo("$[1][0]"));
-        error = Assert.Throws<SexprSerializerException>(() =>
-            SexprSerializer.Serialize(new WithStep([new CallExpression("step", [new IntegerExpression(7)])])))!;
-        Assert.That(error.Path, Is.EqualTo("$[1]"));
     }
 
     [Test]
@@ -112,14 +108,14 @@ public partial class TypedArgumentTests
         Assert.That(and.Arguments[1], Is.TypeOf<Repeat>());
         Assert.That(SexprSerializer.Serialize(call), Is.EqualTo(text));
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Serialize(
-            new Not([new Condition.UnknownCall("not", [])])))!;
+            new Not(new Condition.UnknownCall("not", []))))!;
         Assert.That(error.Path, Is.EqualTo("$[1][0]"));
     }
 
     [Test]
     public void NumberArgumentAcceptsIntegerSyntaxAfterNormalization()
     {
-        var call = new Values([new SymbolExpression("x"), new IntegerExpression(2), new NumberExpression(1), new SymbolExpression("y")]);
+        var call = new Values(new SymbolExpression("x"), new IntegerExpression(2), new NumberExpression(1), new SymbolExpression("y"));
         var text = SexprSerializer.Serialize(call);
         Assert.That(text, Is.EqualTo("(values x 2 1 y)"));
         var result = SexprSerializer.Deserialize<Values>(text);
@@ -128,7 +124,7 @@ public partial class TypedArgumentTests
 
     [TestCase("(open)")]
     [TestCase("(open x 2 0.5 (f))")]
-    public void NullSchemaLeavesArgumentsUnconstrained(string text)
+    public void ExpressionParamsAllowArbitraryArguments(string text)
     {
         Assert.That(SexprSerializer.Serialize(SexprSerializer.Deserialize<Open>(text)), Is.EqualTo(text));
     }
@@ -153,7 +149,7 @@ public partial class TypedArgumentTests
 
     private sealed class CustomStepFormatter : ISexprFormatter<Step>
     {
-        public Step Deserialize(in SNode node, SexprSerializerOptions options) => new([new IntegerExpression(7)]);
+        public Step Deserialize(in SNode node, SexprSerializerOptions options) => new(new IntegerExpression(7));
 
         public void Serialize(ref SexprEmitter emitter, Step value, SexprSerializerOptions options)
         {

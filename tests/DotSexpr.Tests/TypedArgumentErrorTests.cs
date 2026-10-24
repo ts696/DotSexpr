@@ -6,8 +6,8 @@ namespace DotSexpr.Tests;
 
 public partial class TypedArgumentErrorTests
 {
-    [SexprCall("fixed", ArgumentTypes = new[] { typeof(SymbolExpression) })]
-    public sealed partial record Fixed : CallExpression;
+    [SexprCall("fixed")]
+    public sealed partial record Fixed(SymbolExpression Item) : CallExpression;
 
     [SexprCall("positional")]
     public sealed partial record Positional(SymbolExpression Item) : CallExpression;
@@ -33,7 +33,7 @@ public partial class TypedArgumentErrorTests
         var options = new SexprSerializerOptions { Resolver = resolver };
         switch (kind)
         {
-            case 0: Check(new Fixed([new SymbolExpression("x")])); break;
+            case 0: Check(new Fixed(new SymbolExpression("x"))); break;
             case 1: Check(new Positional(new SymbolExpression("x"))); break;
             default: Check(new Variadic(new SymbolExpression("x"))); break;
         }

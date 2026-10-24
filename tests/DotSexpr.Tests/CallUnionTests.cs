@@ -10,13 +10,13 @@ public partial class CallUnionTests
     public abstract partial record ActionExpression : CallExpression;
 
     [SexprCall("move")]
-    public sealed partial record Move : ActionExpression;
+    public sealed partial record Move(params Expression[] Items) : ActionExpression;
 
     [SexprCall("jump")]
-    public sealed partial record Jump : ActionExpression;
+    public sealed partial record Jump(params Expression[] Items) : ActionExpression;
 
     [SexprCall("step")]
-    public sealed partial record Step : ActionExpression;
+    public sealed partial record Step(params Expression[] Items) : ActionExpression;
 
     // Being a derived type (or sharing a registered name) does not register a call.
     public sealed record Unregistered() : ActionExpression("move", []);
