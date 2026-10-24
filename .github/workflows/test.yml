@@ -49,3 +49,37 @@ jobs:
           name: nuget
           path: packages/*.nupkg
           if-no-files-found: error
+
+  native-aot:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+            executable: DotSexpr.PackageTests
+          - os: windows-latest
+            rid: win-x64
+            executable: DotSexpr.PackageTests.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Pack
+        run: dotnet pack src/DotSexpr/DotSexpr.csproj -c Release --output packages
+
+      - name: Restore Native AOT package test
+        run: dotnet restore tests/DotSexpr.PackageTests/DotSexpr.PackageTests.csproj -r ${{ matrix.rid }} -p:UseNuGetPackage=true -p:PublishAot=true --configfile .github/nuget-native-aot.config --packages "${{ runner.temp }}/dotsexpr-aot-packages"
+
+      - name: Publish Native AOT package test
+        run: dotnet publish tests/DotSexpr.PackageTests/DotSexpr.PackageTests.csproj -c Release -r ${{ matrix.rid }} --no-restore -p:UseNuGetPackage=true -p:PublishAot=true --output artifacts/native-aot
+
+      - name: Run Native AOT package test
+        shell: pwsh
+        run: |
+          & "./artifacts/native-aot/${{ matrix.executable }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
