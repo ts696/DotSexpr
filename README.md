@@ -85,7 +85,7 @@ var people = SexprSerializer.Deserialize<Person[]>(
 Generic models are supported when their concrete types can be collected from another
 model's members.
 
-#### Expressions and typed calls
+#### Expressions
 
 `Expression` represents symbols, numbers, and nested calls. Integer literals use
 `IntegerExpression` (`long`); literals containing a fraction or exponent use
@@ -97,6 +97,8 @@ var call = (CallExpression)expression;
 long distance = ((IntegerExpression)call.Arguments[2]).Value;
 double speed = ((NumberExpression)call.Arguments[3]).Value;
 ```
+
+#### Typed calls
 
 To constrain a call's name, define a partial record derived directly from
 `CallExpression` and annotate it with `[SexprCall]`:
@@ -171,6 +173,13 @@ select its formatter. Each argument uses its declared type's formatter in both
 directions, including custom formatters. Invalid values report the argument's path;
 constructed values and values changed with `with` are checked when serialized.
 
+Names are case-sensitive and read-only, including on ordinary `CallExpression` values.
+Arguments remain expressions and may contain calls with other names. Deserializing as
+`Expression` or `CallExpression` produces an ordinary call; request `Move` to validate
+its name.
+
+#### Call unions
+
 To allow several calls in the same position, register them on a common abstract record:
 
 ```csharp
@@ -196,30 +205,14 @@ Union types must be non-generic abstract partial records directly derived from
 names. The union formatter rejects unregistered names on input and unregistered runtime
 types on output. The same validation applies to union-typed model members and arrays.
 
-Registered calls are always recognized recursively inside arguments:
-
-```csharp
-var expression = SexprSerializer.Deserialize<ConditionExpression>(
-    "(and (or))");
-// and -> And, nested or -> Or
-
-[SexprCallUnion(typeof(And), typeof(Or))]
-public abstract partial record ConditionExpression : CallExpression;
-
-[SexprCall("and")]
-public sealed partial record And(params ConditionExpression[] Operands) : ConditionExpression;
-
-[SexprCall("or")]
-public sealed partial record Or(params ConditionExpression[] Operands) : ConditionExpression;
-```
-
-Set `AllowUnknownCalls = true` to accept unregistered names at any depth. The generated
+Registered calls are recognized recursively inside arguments. Set `AllowUnknownCalls = true`
+to accept unregistered names at any depth. The generated
 `UnknownCall` type inherits from the union and preserves the call name and arguments:
 
 ```csharp
 var task = SexprSerializer.Deserialize<ActionDefinition>(
-    "(:precondition (ready ?actor))");
-// Also accepts (not (injured ?actor)), (and ...), (or ...), and (not (or ...)).
+    "(:precondition (and (ready ?actor) (not (injured ?actor))))");
+// and -> And, nested not -> Not, ready and injured -> ConditionExpression.UnknownCall
 
 [SexprCallUnion(typeof(And), typeof(Or), typeof(Not), AllowUnknownCalls = true)]
 public abstract partial record ConditionExpression : CallExpression;
@@ -239,13 +232,10 @@ public partial class ActionDefinition
 }
 ```
 
+The same model also accepts a standalone predicate: `(:precondition (ready ?actor))`.
+
 When serialized through the union, registered names must use their dedicated call types.
 The generated nested name `UnknownCall` is reserved.
-
-Names are case-sensitive and read-only, including on ordinary `CallExpression` values.
-Arguments remain expressions and may contain calls with other names. Deserializing as
-`Expression` or `CallExpression` produces an ordinary call; request `Move` to validate
-its name.
 
 ### Serialization
 
