@@ -344,10 +344,21 @@ public class SDocument : IDisposable
 
     public static SDocument Parse(ReadOnlySpan<byte> bytes, SDocumentOptions options)
     {
+        return Parse(bytes, options, allowMultipleDocuments: false);
+    }
+
+    /// <summary>Parses zero or more top-level expressions as children of a synthetic root list.</summary>
+    public static SDocument ParseMultiple(ReadOnlySpan<byte> bytes, SDocumentOptions options = default)
+    {
+        return Parse(bytes, options, allowMultipleDocuments: true);
+    }
+
+    private static SDocument Parse(ReadOnlySpan<byte> bytes, SDocumentOptions options, bool allowMultipleDocuments)
+    {
         var document = new SDocument(bytes.Length, options);
         try
         {
-            document.ParseSexpr(bytes);
+            document.ParseSexpr(bytes, allowMultipleDocuments: allowMultipleDocuments);
             document._bytes = bytes.ToArray();
         }
         catch
@@ -366,13 +377,24 @@ public class SDocument : IDisposable
 
     public static SDocument Parse(string text, SDocumentOptions options)
     {
+        return Parse(text, options, allowMultipleDocuments: false);
+    }
+
+    /// <summary>Parses zero or more top-level expressions as children of a synthetic root list.</summary>
+    public static SDocument ParseMultiple(string text, SDocumentOptions options = default)
+    {
+        return Parse(text, options, allowMultipleDocuments: true);
+    }
+
+    private static SDocument Parse(string text, SDocumentOptions options, bool allowMultipleDocuments)
+    {
         ArgumentGuard.ThrowIfNull(text);
         var bytes = Encoding.UTF8.GetBytes(text);
 
         var document = new SDocument(bytes.Length, options);
         try
         {
-            document.ParseSexpr(bytes, validateUtf8: false);
+            document.ParseSexpr(bytes, validateUtf8: false, allowMultipleDocuments: allowMultipleDocuments);
             document._bytes = bytes;
         }
         catch
@@ -384,7 +406,7 @@ public class SDocument : IDisposable
         return document;
     }
 
-    private void ParseSexpr(ReadOnlySpan<byte> bytes, bool validateUtf8 = true)
+    private void ParseSexpr(ReadOnlySpan<byte> bytes, bool validateUtf8 = true, bool allowMultipleDocuments = false)
     {
         int[]? listStackRental = null;
         Span<int> listStack = stackalloc int[16];
@@ -393,6 +415,12 @@ public class SDocument : IDisposable
         var elementId = 0;
         var listId = -1;
         var topLevel = 0;
+
+        if (allowMultipleDocuments)
+        {
+            MakeToken(STokenKind.List, RootId, 0);
+            elementId++;
+        }
 
         try
         {
@@ -516,13 +544,13 @@ public class SDocument : IDisposable
 
                 bufferIndex++;
 
-                if (topLevel > 1)
+                if (!allowMultipleDocuments && topLevel > 1)
                 {
                     throw new SexprParserException("Only one top-level expression is allowed.", bytes, GetToken(elementId - 1).Offset);
                 }
             }
 
-            if (topLevel == 0)
+            if (!allowMultipleDocuments && topLevel == 0)
             {
                 throw new SexprParserException("Unexpected end of file.", bytes, bytes.Length);
             }
@@ -530,6 +558,13 @@ public class SDocument : IDisposable
             if (listId >= 0)
             {
                 throw new SexprParserException("Unexpected end of input: expected ')'.", bytes, bytes.Length);
+            }
+
+            if (allowMultipleDocuments)
+            {
+                SetCount(RootId, topLevel);
+                SetLength(RootId, bytes.Length);
+                SetEndIndex(RootId, elementId);
             }
         }
         finally

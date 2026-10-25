@@ -30,6 +30,11 @@ foreach (var node in document.RootNode)
 }
 ```
 
+`SDocument.Parse` and `TryParse` accept `string` or UTF-8 input and require exactly one
+top-level expression. Use `SDocument.ParseMultiple` to read zero or more expressions;
+its `RootNode` is a synthetic list containing them. The synthetic root covers the original
+input without adding parentheses or affecting source positions or `MaxDepth`.
+
 ### Deserialization
 
 #### Define and read a model
@@ -84,6 +89,19 @@ var people = SexprSerializer.Deserialize<Person[]>(
 
 Generic models are supported when their concrete types can be collected from another
 model's members.
+
+#### Multiple documents
+
+Use `DeserializeMultipleDocuments<T>` to read multiple top-level expressions without
+wrapping them in an outer list:
+
+```csharp
+var people = SexprSerializer.DeserializeMultipleDocuments<Person>(
+    "(:Name Alice :Age 20)\n(:Name Bob :Age 30)");
+```
+
+The result is a `T[]` in source order. Empty input or input containing only whitespace
+and comments returns an empty array.
 
 #### Expressions
 
