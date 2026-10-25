@@ -30,6 +30,11 @@ foreach (var node in document.RootNode)
 }
 ```
 
+`SDocument.Parse` and `TryParse` accept `string` or UTF-8 input and require exactly one
+top-level expression. Use `SDocument.ParseMultiple` to read zero or more expressions;
+its `RootNode` is a synthetic list containing them. The synthetic root covers the original
+input without adding parentheses or affecting source positions or `MaxDepth`.
+
 ### Deserialization
 
 #### Define and read a model
@@ -87,32 +92,17 @@ model's members.
 
 #### Multiple documents
 
-Use `DeserializeMultipleDocuments<T>` to read zero or more top-level expressions as
-separate documents, without wrapping them in an outer list:
+Use `DeserializeMultipleDocuments<T>` to read multiple top-level expressions without
+wrapping them in an outer list:
 
 ```csharp
 var people = SexprSerializer.DeserializeMultipleDocuments<Person>(
     "(:Name Alice :Age 20)\n(:Name Bob :Age 30)");
-// Returns a Person[] in source order.
 ```
 
-Both `string` and UTF-8 `ReadOnlySpan<byte>` inputs are supported, along with custom
-serializer options. Whitespace and comments may separate documents; no special document
-separator is needed. Empty input or input containing only whitespace and comments returns
-an empty array. Each expression is deserialized as `T`, so lists remain individual documents
-(use `T = int[]`, for example, to read several lists of integers).
-
-Invalid syntax or values throw immediately without returning partial results. Error
-positions refer to the original input, and serializer error paths start with the zero-based
+The result is a `T[]` in source order. Empty input or input containing only whitespace
+and comments returns an empty array. Serializer error paths include the zero-based
 document index, for example `$[1].Age`.
-
-To inspect syntax without deserializing, use `SDocument.ParseMultiple` with either input
-type and optional `SDocumentOptions`. Its `RootNode` is a synthetic list whose children are
-the top-level expressions. Its raw text covers the entire original input; the synthetic
-list adds no parentheses and does not count toward `MaxDepth`.
-
-The existing `SDocument.Parse`, `TryParse`, and `SexprSerializer.Deserialize<T>` APIs
-continue to require exactly one top-level expression.
 
 #### Expressions
 
