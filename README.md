@@ -101,8 +101,7 @@ var people = SexprSerializer.DeserializeMultipleDocuments<Person>(
 ```
 
 The result is a `T[]` in source order. Empty input or input containing only whitespace
-and comments returns an empty array. Serializer error paths include the zero-based
-document index, for example `$[1].Age`.
+and comments returns an empty array.
 
 #### Expressions
 
