@@ -1,3 +1,4 @@
+using System;
 using System.Buffers;
 using System.Text;
 using DotSexpr.Emitter;
@@ -67,6 +68,41 @@ public static class SexprSerializer
     {
         using var document = SDocument.Parse(text);
         return Deserialize<T>(document.RootNode, options);
+    }
+
+    /// <summary>Deserializes each top-level expression in order. Empty input returns an empty array.</summary>
+    public static T[] DeserializeMultipleDocuments<T>(string text, SexprSerializerOptions? options = null)
+    {
+        using var document = SDocument.ParseMultiple(text);
+        return DeserializeDocuments<T>(document.RootNode, options);
+    }
+
+    /// <summary>Deserializes each top-level UTF-8 expression in order. Empty input returns an empty array.</summary>
+    public static T[] DeserializeMultipleDocuments<T>(ReadOnlySpan<byte> bytes, SexprSerializerOptions? options = null)
+    {
+        using var document = SDocument.ParseMultiple(bytes);
+        return DeserializeDocuments<T>(document.RootNode, options);
+    }
+
+    private static T[] DeserializeDocuments<T>(in SNode root, SexprSerializerOptions? options)
+    {
+        options ??= SexprSerializerOptions.Default;
+        var values = new T[root.Count];
+        var index = 0;
+        foreach (var node in root)
+        {
+            try
+            {
+                values[index] = Deserialize<T>(in node, options);
+            }
+            catch (SexprSerializerException exception)
+            {
+                exception.PrependIndex(index);
+                throw;
+            }
+            index++;
+        }
+        return values;
     }
 
     public static T Deserialize<T>(in SNode node, SexprSerializerOptions? options = null)
