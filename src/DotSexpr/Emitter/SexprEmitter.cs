@@ -9,6 +9,9 @@ namespace DotSexpr.Emitter;
 public struct SexprEmitter
 {
     private static readonly Encoding Utf8 = new UTF8Encoding(false, true);
+#if NET8_0_OR_GREATER
+    private static readonly SearchValues<char> StringSpecialCharacters = CreateStringSpecialCharacters();
+#endif
     private readonly IBufferWriter<byte> _writer;
     private readonly int _maxDepth;
     private int _depth;
@@ -68,7 +71,23 @@ public struct SexprEmitter
                 var character = value[i];
                 if (character >= ' ' && character != '"' && character != '\\')
                 {
-                    continue;
+#if NET8_0_OR_GREATER
+                    // Amortize the search over long plain runs, not escape-heavy text.
+                    if (i - start >= 16 && value.Length - i >= 16)
+                    {
+                        var found = value.AsSpan(i).IndexOfAny(StringSpecialCharacters);
+                        if (found < 0)
+                        {
+                            break;
+                        }
+                        i += found;
+                        character = value[i];
+                    }
+                    else
+#endif
+                    {
+                        continue;
+                    }
                 }
                 WriteText(value.AsSpan(start, i - start));
                 switch (character)
@@ -227,6 +246,20 @@ public struct SexprEmitter
         var written = Utf8.GetBytes(text, _writer.GetSpan(length));
         _writer.Advance(written);
     }
+
+#if NET8_0_OR_GREATER
+    private static SearchValues<char> CreateStringSpecialCharacters()
+    {
+        Span<char> values = stackalloc char[34];
+        for (var i = 0; i < 32; i++)
+        {
+            values[i] = (char)i;
+        }
+        values[32] = '"';
+        values[33] = '\\';
+        return SearchValues.Create(values);
+    }
+#endif
 
     private void WriteControlCharacter(char value)
     {

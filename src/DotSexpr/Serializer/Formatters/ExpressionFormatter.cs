@@ -63,7 +63,7 @@ public class ExpressionFormatter : ISexprFormatter<Expression>
         if (node.Token.IsNumber)
         {
             var bytes = node.GetRawUtf8().Span;
-            if (bytes.IndexOf((byte)'.') < 0 && bytes.IndexOf((byte)'e') < 0 && bytes.IndexOf((byte)'E') < 0)
+            if (bytes.IndexOfAny((byte)'.', (byte)'e', (byte)'E') < 0)
             {
                 return new IntegerExpression(SexprSerializer.Deserialize<long>(in node, options));
             }

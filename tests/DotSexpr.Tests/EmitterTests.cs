@@ -7,6 +7,46 @@ namespace DotSexpr.Tests;
 
 public partial class EmitterTests
 {
+    [TestCase(0)]
+    [TestCase(1)]
+    [TestCase(15)]
+    [TestCase(16)]
+    [TestCase(17)]
+    [TestCase(31)]
+    [TestCase(32)]
+    [TestCase(33)]
+    [TestCase(63)]
+    [TestCase(64)]
+    [TestCase(65)]
+    [TestCase(127)]
+    public void WriteString_EscapesAfterPlainText_PreservesUnicodeAndTrailingText(int prefixLength)
+    {
+        var prefix = new string('a', prefixLength);
+        var suffix = "日本語😀" + new string('b', 64);
+        var value = prefix + "\0\b\f\n\r\t\"\\\u001f" + suffix;
+
+        var text = SexprSerializer.Serialize(value);
+
+        Assert.That(text, Is.EqualTo("\"" + prefix + "\\u0000\\b\\f\\n\\r\\t\\\"\\\\\\u001f" + suffix + "\""));
+        using var document = SDocument.Parse(text);
+        Assert.That(document.RootNode.GetString(), Is.EqualTo(value));
+    }
+
+    [TestCase(0)]
+    [TestCase(1)]
+    [TestCase(15)]
+    [TestCase(16)]
+    [TestCase(17)]
+    [TestCase(31)]
+    [TestCase(32)]
+    [TestCase(33)]
+    [TestCase(4096)]
+    public void WriteString_WithoutEscapes_PreservesEntireValue(int length)
+    {
+        var value = new string('a', length);
+        Assert.That(SexprSerializer.Serialize(value), Is.EqualTo("\"" + value + "\""));
+    }
+
     [Test]
     public void Write_NestedListsAndAtoms_SeparatesValuesWithoutExtraSpaces()
     {
