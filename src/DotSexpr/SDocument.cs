@@ -523,7 +523,12 @@ public class SDocument : IDisposable
                 }
                 else
                 {
-                    var elemLength = GetSymbolLength(bytes.Slice(bufferIndex));
+                    var elemLength = GetSymbolLength(bytes.Slice(bufferIndex), out var invalidCharacterIndex);
+                    if (invalidCharacterIndex >= 0)
+                    {
+                        throw new SexprParserException("A symbol cannot contain control characters or quotes.",
+                            bytes, bufferIndex + invalidCharacterIndex);
+                    }
 
                     var elemSpan = bytes.Slice(bufferIndex, elemLength);
                     var kind = IsNumber(elemSpan) ? STokenKind.Number : STokenKind.Symbol;
@@ -643,16 +648,33 @@ public class SDocument : IDisposable
     }
 
 #if NET8_0_OR_GREATER
-    private static readonly SearchValues<byte> SymbolDelimiters = SearchValues.Create(" \n\r\t();"u8);
+    private static readonly SearchValues<byte> SymbolDelimiters = CreateSymbolDelimiters();
 #endif
 
-    private static int GetSymbolLength(ReadOnlySpan<byte> bytes)
+    private static int GetSymbolLength(ReadOnlySpan<byte> bytes, out int invalidCharacterIndex)
     {
 #if NET8_0_OR_GREATER
         var idx = bytes.IndexOfAny(SymbolDelimiters);
 #else
-        var idx = bytes.IndexOfAny(" \n\r\t();"u8);
+        var idx = -1;
+        for (var i = 0; i < bytes.Length; i++)
+        {
+            if (bytes[i] <= (byte)' ' || bytes[i] is (byte)'(' or (byte)')' or (byte)';' or (byte)'"')
+            {
+                idx = i;
+                break;
+            }
+        }
 #endif
+        invalidCharacterIndex = -1;
+        if (idx >= 0)
+        {
+            var character = bytes[idx];
+            if (character == '"' || (character < ' ' && character is not ((byte)'\n' or (byte)'\r' or (byte)'\t')))
+            {
+                invalidCharacterIndex = idx;
+            }
+        }
         return idx >= 0 ? idx : bytes.Length;
     }
 
@@ -755,6 +777,20 @@ public class SDocument : IDisposable
     }
 
 #if NET8_0_OR_GREATER
+    private static SearchValues<byte> CreateSymbolDelimiters()
+    {
+        Span<byte> values = stackalloc byte[37];
+        for (var i = 0; i <= 0x20; i++)
+        {
+            values[i] = (byte)i;
+        }
+        values[33] = (byte)'(';
+        values[34] = (byte)')';
+        values[35] = (byte)';';
+        values[36] = (byte)'"';
+        return SearchValues.Create(values);
+    }
+
     private static SearchValues<byte> CreateStringSpecialCharacters()
     {
         const int controlCharacterCount = 0x20;
