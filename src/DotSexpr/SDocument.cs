@@ -866,23 +866,24 @@ public class SDocument : IDisposable
 
     private void IncrementCount(int id)
     {
-        var token = GetToken(id);
-        SetCount(id, token.Count + 1);
+        ThrowIfDisposed();
+        ref var token = ref _tokens[id];
+        token.Count++;
     }
 
     private void SetLength(int id, int length)
     {
-        _tokens[id] = _tokens[id] with { Length = length };
+        _tokens[id].Length = length;
     }
 
     private void SetCount(int id, int count)
     {
-        _tokens[id] = _tokens[id] with { Count = count };
+        _tokens[id].Count = count;
     }
 
     private void SetEndIndex(int id, int endIndex)
     {
-        _tokens[id] = _tokens[id] with { EndIndex = endIndex };
+        _tokens[id].EndIndex = endIndex;
     }
 
     public void Dispose()
