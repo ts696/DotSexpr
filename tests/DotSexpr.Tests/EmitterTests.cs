@@ -9,6 +9,9 @@ public partial class EmitterTests
 {
     [TestCase(0)]
     [TestCase(1)]
+    [TestCase(4)]
+    [TestCase(7)]
+    [TestCase(8)]
     [TestCase(15)]
     [TestCase(16)]
     [TestCase(17)]
@@ -43,13 +46,17 @@ public partial class EmitterTests
     [TestCase(4096)]
     public void WriteString_WithoutEscapes_PreservesEntireValue(int length)
     {
-        var value = new string('a', length);
+        var value = new string(Enumerable.Range(0, length).Select(i => (char)('a' + i % 26)).ToArray());
         Assert.That(SexprSerializer.Serialize(value), Is.EqualTo("\"" + value + "\""));
     }
 
     [TestCase(" !#()[]{};|~")]
     [TestCase("abcd日本")]
     [TestCase("abcd\u007f")]
+    [TestCase("abc\"defg")]
+    [TestCase("abcd\\efg")]
+    [TestCase("abc\u001fdefg")]
+    [TestCase("abcdefghijk日本")]
     public void WriteString_ShortMixedCharacters_RoundTrips(string value)
     {
         var text = SexprSerializer.Serialize(value);
