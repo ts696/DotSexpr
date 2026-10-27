@@ -7,6 +7,34 @@ namespace DotSexpr.Tests;
 
 public partial class EmitterTests
 {
+    [Test]
+    public void Serialize_RetainedEmitter_RejectsReleasedOutputBuffer()
+    {
+        var formatter = new CapturingFormatter();
+        var options = new SexprSerializerOptions { Resolver = formatter };
+        Assert.That(SexprSerializer.Serialize(formatter, options), Is.EqualTo("()"));
+
+        Assert.That(() => formatter.Captured.WriteNumber(1), Throws.TypeOf<ObjectDisposedException>());
+    }
+
+    private sealed class CapturingFormatter : ISexprFormatterResolver, ISexprFormatter<CapturingFormatter>
+    {
+        internal SexprEmitter Captured;
+
+        public ISexprFormatter<T>? GetFormatter<T>() => typeof(T) == typeof(CapturingFormatter)
+            ? (ISexprFormatter<T>)(object)this : null;
+
+        public void Serialize(ref SexprEmitter emitter, CapturingFormatter value, SexprSerializerOptions options)
+        {
+            emitter.BeginList();
+            Captured = emitter;
+            emitter.EndList();
+        }
+
+        public CapturingFormatter Deserialize(in SNode node, SexprSerializerOptions options) =>
+            throw new NotSupportedException();
+    }
+
     [TestCase(0)]
     [TestCase(1)]
     [TestCase(15)]

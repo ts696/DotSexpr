@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Text;
 using DotSexpr.Emitter;
 
@@ -158,11 +159,6 @@ public static class SexprSerializer
 
         public void Advance(int count)
         {
-            var buffer = _buffer ?? throw new ObjectDisposedException(nameof(PooledBufferWriter));
-            if ((uint)count > (uint)(buffer.Length - _written))
-            {
-                throw new ArgumentOutOfRangeException(nameof(count));
-            }
             _written += count;
         }
 
@@ -170,6 +166,7 @@ public static class SexprSerializer
 
         public Span<byte> GetSpan(int sizeHint = 0) => GetBuffer(sizeHint).AsSpan(_written);
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte[] GetBuffer(int sizeHint)
         {
             var buffer = _buffer ?? throw new ObjectDisposedException(nameof(PooledBufferWriter));
@@ -182,7 +179,11 @@ public static class SexprSerializer
             {
                 return buffer;
             }
+            return GrowBuffer(buffer, required);
+        }
 
+        private byte[] GrowBuffer(byte[] buffer, int required)
+        {
             var capacity = (int)Math.Min(Math.Max((long)buffer.Length * 2, required), int.MaxValue);
             var replacement = ArrayPool<byte>.Shared.Rent(capacity);
             buffer.AsSpan(0, _written).CopyTo(replacement);
