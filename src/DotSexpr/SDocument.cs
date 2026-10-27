@@ -878,7 +878,7 @@ public class SDocument : IDisposable
     {
         ThrowIfDisposed();
         ref var token = ref _tokens[id];
-        token.Count++;
+        token.IncrementCount();
     }
 
     private void SetLength(int id, int length)
