@@ -9,14 +9,14 @@ public static class SexprSerializer
 {
     public static string Serialize<T>(T value, SexprSerializerOptions? options = null)
     {
-        var buffer = new ArrayBufferWriter<byte>();
+        using var buffer = new PooledBufferWriter();
         Serialize(buffer, value, options);
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
     public static byte[] SerializeToUtf8Bytes<T>(T value, SexprSerializerOptions? options = null)
     {
-        var buffer = new ArrayBufferWriter<byte>();
+        using var buffer = new PooledBufferWriter();
         Serialize(buffer, value, options);
         return buffer.WrittenSpan.ToArray();
     }
@@ -129,6 +129,62 @@ public static class SexprSerializer
         {
             exception.PrependProperty(name);
             throw;
+        }
+    }
+
+    private sealed class PooledBufferWriter : IBufferWriter<byte>, IDisposable
+    {
+        private byte[]? _buffer = ArrayPool<byte>.Shared.Rent(256);
+        private int _written;
+
+        public ReadOnlySpan<byte> WrittenSpan =>
+            (_buffer ?? throw new ObjectDisposedException(nameof(PooledBufferWriter))).AsSpan(0, _written);
+
+        public void Advance(int count)
+        {
+            var buffer = _buffer ?? throw new ObjectDisposedException(nameof(PooledBufferWriter));
+            if ((uint)count > (uint)(buffer.Length - _written))
+            {
+                throw new ArgumentOutOfRangeException(nameof(count));
+            }
+            _written += count;
+        }
+
+        public Memory<byte> GetMemory(int sizeHint = 0) => GetBuffer(sizeHint).AsMemory(_written);
+
+        public Span<byte> GetSpan(int sizeHint = 0) => GetBuffer(sizeHint).AsSpan(_written);
+
+        private byte[] GetBuffer(int sizeHint)
+        {
+            var buffer = _buffer ?? throw new ObjectDisposedException(nameof(PooledBufferWriter));
+            if (sizeHint < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(sizeHint));
+            }
+            var required = checked(_written + Math.Max(sizeHint, 1));
+            if (required <= buffer.Length)
+            {
+                return buffer;
+            }
+
+            var capacity = (int)Math.Min(Math.Max((long)buffer.Length * 2, required), int.MaxValue);
+            var replacement = ArrayPool<byte>.Shared.Rent(capacity);
+            buffer.AsSpan(0, _written).CopyTo(replacement);
+            _buffer = replacement;
+            ArrayPool<byte>.Shared.Return(buffer);
+            return replacement;
+        }
+
+        public void Dispose()
+        {
+            var buffer = _buffer;
+            if (buffer == null)
+            {
+                return;
+            }
+            _buffer = null;
+            _written = 0;
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 }

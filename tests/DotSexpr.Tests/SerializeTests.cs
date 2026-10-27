@@ -151,14 +151,27 @@ public partial class SerializeTests
         Assert.That(SexprSerializer.Deserialize<string>(text), Is.EqualTo(value));
     }
 
-    [Test]
-    public void Serialize_Utf8AndBufferWriter_ProduceSameOutputAsString()
+    [TestCase(16)]
+    [TestCase(4096)]
+    public void Serialize_Utf8AndBufferWriter_ProduceSameOutputAsString(int length)
     {
-        var value = new Person { Name = "東京😀", Age = 3 };
+        var value = new Person { Name = new string('a', length) + "東京😀", Age = 3 };
         var writer = new ArrayBufferWriter<byte>();
         SexprSerializer.Serialize(writer, value);
         Assert.That(writer.WrittenSpan.ToArray(), Is.EqualTo(SexprSerializer.SerializeToUtf8Bytes(value)));
         Assert.That(Encoding.UTF8.GetString(writer.WrittenSpan), Is.EqualTo(SexprSerializer.Serialize(value)));
+    }
+
+    [Test]
+    public void Serialize_Utf8Result_RemainsValidAfterAnotherSerialization()
+    {
+        var value = new string('a', 4096) + "東京😀";
+        var bytes = SexprSerializer.SerializeToUtf8Bytes(value);
+
+        SexprSerializer.SerializeToUtf8Bytes(new string('b', 6000));
+
+        using var document = SDocument.Parse(bytes);
+        Assert.That(document.RootNode.GetString(), Is.EqualTo(value));
     }
 
     [Test]
