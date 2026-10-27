@@ -34,6 +34,22 @@ public class GeneratorTests
         .Append(MetadataReference.CreateFromFile(typeof(SexprObjectAttribute).Assembly.Location))
         .ToArray();
 
+    [Test]
+    public void Generate_ObjectWithEqualLengthAndUnicodeKeys_CompilesWithCSharp9()
+    {
+        var result = Generate("""
+            [SexprObject] public partial class Model
+            {
+                public int Value { get; set; }
+                public int Other { get; set; }
+                [SexprTag("名前")] public int Name { get; set; }
+                public int Number { get; set; }
+            }
+            """, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(result.GeneratorDiagnostics, Is.Empty);
+        Assert.That(result.CompilerErrors, Is.Empty);
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void Generate_CallUnion_CompilesWithCSharp9(bool allowUnknownCalls)

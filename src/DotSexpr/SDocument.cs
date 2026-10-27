@@ -491,8 +491,9 @@ public class SDocument : IDisposable
                         throw new SexprParserException("Unexpected ')': no matching '(' was found.", bytes, bufferIndex);
                     }
 
-                    SetLength(listStack[listId], bufferIndex - GetToken(listStack[listId]).Offset + 1);
-                    SetEndIndex(listStack[listId], elementId);
+                    ref var list = ref _tokens[listStack[listId]];
+                    list.Length = bufferIndex - list.Offset + 1;
+                    list.EndIndex = elementId;
                     listId--;
                 }
                 else if (c == '\n' || c == '\r' || c == '\t' || c == ' ')
@@ -517,8 +518,7 @@ public class SDocument : IDisposable
                     }
 
                     var stringKind = hasEscape ? StringKind.Escaped : StringKind.Plane;
-                    MakeToken(STokenKind.String, elementId, bufferIndex, (int)stringKind);
-                    SetLength(elementId, strLength);
+                    MakeToken(STokenKind.String, elementId, bufferIndex, (int)stringKind, strLength);
                     bufferIndex += strLength - 1;
                     elementId++;
 
@@ -537,8 +537,7 @@ public class SDocument : IDisposable
 
                     var elemSpan = bytes.Slice(bufferIndex, elemLength);
                     var kind = IsNumber(elemSpan) ? STokenKind.Number : STokenKind.Symbol;
-                    MakeToken(kind, elementId, bufferIndex);
-                    SetLength(elementId, elemLength);
+                    MakeToken(kind, elementId, bufferIndex, length: elemLength);
                     bufferIndex += elemLength - 1;
                     elementId++;
 
@@ -572,9 +571,10 @@ public class SDocument : IDisposable
 
             if (allowMultipleDocuments)
             {
-                SetCount(RootId, topLevel);
-                SetLength(RootId, bytes.Length);
-                SetEndIndex(RootId, elementId);
+                ref var root = ref _tokens[RootId];
+                root.Count = topLevel;
+                root.Length = bytes.Length;
+                root.EndIndex = elementId;
             }
         }
         finally
@@ -749,10 +749,8 @@ public class SDocument : IDisposable
         return -1;
     }
 
-    private void MakeToken(STokenKind kind, int id, int offset, int subKind = 0)
+    private void MakeToken(STokenKind kind, int id, int offset, int subKind = 0, int length = 0)
     {
-        var token = new SToken(kind, subKind, offset);
-
         if (_tokens.Length <= id)
         {
             var newBuffer = ArrayPool<SToken>.Shared.Rent(_tokens.Length * 2);
@@ -761,7 +759,7 @@ public class SDocument : IDisposable
             _tokens = newBuffer;
         }
 
-        _tokens[id] = token;
+        _tokens[id] = new SToken(kind, subKind, offset) { Length = length };
     }
 
 #if NET8_0_OR_GREATER
@@ -876,24 +874,8 @@ public class SDocument : IDisposable
 
     private void IncrementCount(int id)
     {
-        ThrowIfDisposed();
         ref var token = ref _tokens[id];
-        token.Count++;
-    }
-
-    private void SetLength(int id, int length)
-    {
-        _tokens[id].Length = length;
-    }
-
-    private void SetCount(int id, int count)
-    {
-        _tokens[id].Count = count;
-    }
-
-    private void SetEndIndex(int id, int endIndex)
-    {
-        _tokens[id].EndIndex = endIndex;
+        token.IncrementCount();
     }
 
     public void Dispose()

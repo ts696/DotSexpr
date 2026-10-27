@@ -283,23 +283,37 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 .AppendLine(" Deserialize(in global::DotSexpr.SNode node, global::DotSexpr.Serializer.SexprSerializerOptions options) {")
                 .AppendLine("var reader = new global::DotSexpr.Serializer.SexprObjectReader(in node);")
                 .Append("var result = new ").Append(fullName).AppendLine("();")
-                .AppendLine("while (reader.MoveNext(out var key, out var value)) {");
-            for (var i = 0; i < members.Count; i++)
+                .AppendLine("while (reader.MoveNext(out var key, out var value)) {")
+                .AppendLine("var keyBytes = key.GetRawUtf8().Span;")
+                .AppendLine("switch (keyBytes.Length) {");
+            var keyGroups = members.Select((member, index) => new { Member = member, Index = index })
+                .GroupBy(item => Encoding.UTF8.GetByteCount(":" + item.Member.Tag))
+                .OrderBy(group => group.Key);
+            foreach (var group in keyGroups)
             {
-                var member = members[i];
-                code.Append(i == 0 ? "if" : "else if").Append(" (key.ValueEquals(Key").Append(i).AppendLine(".Utf8Value)) {")
-                    .Append("result.@").Append(member.Symbol.Name).Append(" = global::DotSexpr.Serializer.SexprSerializer.DeserializeProperty<")
-                    .Append(member.Type.ToDisplayString(NullableTypeFormat)).Append(">(in value, options, ")
-                    .Append(SymbolDisplay.FormatLiteral(member.Tag, true));
-                var builtinIndex = builtinTypes.IndexOf(member.Type.ToDisplayString(NullableTypeFormat));
-                if (builtinIndex >= 0)
+                code.Append("case ").Append(group.Key).AppendLine(":");
+                var first = true;
+                foreach (var item in group)
                 {
-                    code.Append(", global::System.Object.ReferenceEquals(options.Resolver, global::DotSexpr.Serializer.Resolvers.DefaultResolver.Instance) ? BuiltinFormatter")
-                        .Append(builtinIndex).Append(" : null");
+                    var member = item.Member;
+                    code.Append(first ? "if" : "else if")
+                        .Append(" (global::System.MemoryExtensions.SequenceEqual(keyBytes, Key")
+                        .Append(item.Index).AppendLine(".Utf8Value)) {")
+                        .Append("result.@").Append(member.Symbol.Name).Append(" = global::DotSexpr.Serializer.SexprSerializer.DeserializeProperty<")
+                        .Append(member.Type.ToDisplayString(NullableTypeFormat)).Append(">(in value, options, ")
+                        .Append(SymbolDisplay.FormatLiteral(member.Tag, true));
+                    var builtinIndex = builtinTypes.IndexOf(member.Type.ToDisplayString(NullableTypeFormat));
+                    if (builtinIndex >= 0)
+                    {
+                        code.Append(", global::System.Object.ReferenceEquals(options.Resolver, global::DotSexpr.Serializer.Resolvers.DefaultResolver.Instance) ? BuiltinFormatter")
+                            .Append(builtinIndex).Append(" : null");
+                    }
+                    code.AppendLine(");\n}");
+                    first = false;
                 }
-                code.AppendLine(");\n}");
+                code.AppendLine("break;");
             }
-            code.AppendLine("}\nreturn result;\n}\n}");
+            code.AppendLine("}\n}\nreturn result;\n}\n}");
         }
         foreach (var _ in scopes) code.AppendLine("}");
         if (!type.ContainingNamespace.IsGlobalNamespace)
