@@ -7,6 +7,27 @@ namespace DotSexpr.Tests;
 public partial class FormatterTests
 {
     [SexprObject]
+    public partial class KeyGroups
+    {
+        public int Value { get; set; }
+        public int Other { get; set; }
+        [SexprTag("名前")]
+        public int Name { get; set; }
+        public int Number { get; set; }
+    }
+
+    [Test]
+    public void Deserialize_EqualLengthKeys_PreserveExactMatchingAndInputOrder()
+    {
+        var result = SexprSerializer.Deserialize<KeyGroups>(
+            "(:Other 2 :Value 1 :名前 3 :Number 4 :Other 5 :Unknow 9 :Vxlue 7)");
+        Assert.That(result.Value, Is.EqualTo(1));
+        Assert.That(result.Other, Is.EqualTo(5));
+        Assert.That(result.Name, Is.EqualTo(3));
+        Assert.That(result.Number, Is.EqualTo(4));
+    }
+
+    [SexprObject]
     public partial class Tagged
     {
         [SexprTag("full-name")]
