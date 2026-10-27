@@ -875,7 +875,7 @@ public class SDocument : IDisposable
     private void IncrementCount(int id)
     {
         ref var token = ref _tokens[id];
-        token.Count++;
+        token.IncrementCount();
     }
 
     public void Dispose()
