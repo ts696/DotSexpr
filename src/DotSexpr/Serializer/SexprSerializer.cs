@@ -37,6 +37,16 @@ public static class SexprSerializer
             throw SexprSerializerException.ForSerialization("Null values cannot be represented as an S-expression.");
         }
         var formatter = options.Resolver.GetFormatter<T>();
+        SerializeResolved(ref emitter, value, options, formatter);
+    }
+
+    internal static void SerializeResolved<T>(ref SexprEmitter emitter, T value,
+        SexprSerializerOptions options, ISexprFormatter<T>? formatter)
+    {
+        if (value is null)
+        {
+            throw SexprSerializerException.ForSerialization("Null values cannot be represented as an S-expression.");
+        }
         if (formatter == null)
         {
             throw SexprSerializerException.ForSerialization(MissingFormatter<T>());
@@ -109,6 +119,12 @@ public static class SexprSerializer
     {
         options ??= SexprSerializerOptions.Default;
         var formatter = options.Resolver.GetFormatter<T>();
+        return DeserializeResolved(in node, options, formatter);
+    }
+
+    internal static T DeserializeResolved<T>(in SNode node, SexprSerializerOptions options,
+        ISexprFormatter<T>? formatter)
+    {
         if (formatter == null)
         {
             throw new SexprSerializerException(MissingFormatter<T>(), node);
