@@ -9,14 +9,14 @@ public static class SexprSerializer
 {
     public static string Serialize<T>(T value, SexprSerializerOptions? options = null)
     {
-        using var buffer = new PooledBufferWriter(!typeof(T).IsPrimitive && typeof(T) != typeof(string));
+        using var buffer = new PooledBufferWriter(typeof(T) != typeof(string) && !typeof(T).IsPrimitive);
         Serialize(buffer, value, options);
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
     public static byte[] SerializeToUtf8Bytes<T>(T value, SexprSerializerOptions? options = null)
     {
-        using var buffer = new PooledBufferWriter(!typeof(T).IsPrimitive && typeof(T) != typeof(string));
+        using var buffer = new PooledBufferWriter(typeof(T) != typeof(string) && !typeof(T).IsPrimitive);
         Serialize(buffer, value, options);
         return buffer.WrittenSpan.ToArray();
     }
@@ -157,11 +157,14 @@ public static class SexprSerializer
         private byte[]? _buffer;
         private int _written;
         private readonly bool _rememberCapacity;
+        private readonly bool _startedWithLargeHint;
 
         public PooledBufferWriter(bool rememberCapacity)
         {
             _rememberCapacity = rememberCapacity;
-            _buffer = ArrayPool<byte>.Shared.Rent(rememberCapacity && _capacityHint > 0 ? _capacityHint : InitialCapacity);
+            var capacity = rememberCapacity && _capacityHint > 0 ? _capacityHint : InitialCapacity;
+            _startedWithLargeHint = rememberCapacity && capacity > InitialCapacity;
+            _buffer = ArrayPool<byte>.Shared.Rent(capacity);
         }
 
         public ReadOnlySpan<byte> WrittenSpan =>
@@ -198,6 +201,10 @@ public static class SexprSerializer
             var replacement = ArrayPool<byte>.Shared.Rent(capacity);
             buffer.AsSpan(0, _written).CopyTo(replacement);
             _buffer = replacement;
+            if (_rememberCapacity)
+            {
+                _capacityHint = Math.Min(replacement.Length, MaxInitialCapacity);
+            }
             ArrayPool<byte>.Shared.Return(buffer);
             return replacement;
         }
@@ -210,9 +217,9 @@ public static class SexprSerializer
                 return;
             }
             _buffer = null;
-            if (_rememberCapacity)
+            if (_startedWithLargeHint && _written <= InitialCapacity)
             {
-                _capacityHint = Math.Clamp(_written, InitialCapacity, MaxInitialCapacity);
+                _capacityHint = InitialCapacity;
             }
             _written = 0;
             ArrayPool<byte>.Shared.Return(buffer);
