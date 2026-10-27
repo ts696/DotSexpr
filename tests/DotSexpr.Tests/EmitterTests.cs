@@ -9,9 +9,6 @@ public partial class EmitterTests
 {
     [TestCase(0)]
     [TestCase(1)]
-    [TestCase(4)]
-    [TestCase(7)]
-    [TestCase(8)]
     [TestCase(15)]
     [TestCase(16)]
     [TestCase(17)]
@@ -37,6 +34,9 @@ public partial class EmitterTests
 
     [TestCase(0)]
     [TestCase(1)]
+    [TestCase(4)]
+    [TestCase(7)]
+    [TestCase(8)]
     [TestCase(15)]
     [TestCase(16)]
     [TestCase(17)]
