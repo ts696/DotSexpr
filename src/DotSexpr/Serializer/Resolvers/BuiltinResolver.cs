@@ -56,7 +56,7 @@ public class BuiltinResolver : ISexprFormatterResolver
             }
             else if (type == typeof(string[]))
             {
-                formatter = new ArrayFormatter<string>();
+                formatter = new StringArrayFormatter();
             }
             else if (type == typeof(int[]))
             {
