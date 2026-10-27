@@ -7,6 +7,15 @@ namespace DotSexpr.Tests;
 
 public partial class EmitterTests
 {
+    [TestCase(" !#()[]{};|~")]
+    [TestCase("abcd日本")]
+    [TestCase("abcd\u007f")]
+    public void WriteString_ShortMixedCharacters_RoundTrips(string value)
+    {
+        var text = SexprSerializer.Serialize(value);
+        Assert.That(SexprSerializer.Deserialize<string>(text), Is.EqualTo(value));
+    }
+
     [TestCase(0)]
     [TestCase(1)]
     [TestCase(15)]
