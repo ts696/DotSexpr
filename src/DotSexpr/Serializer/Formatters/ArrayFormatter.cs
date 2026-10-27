@@ -15,6 +15,16 @@ public class ArrayFormatter<T> : ISexprFormatter<T[]>
                 if (i == 0 && value[i] is not null)
                 {
                     formatter = options.Resolver.GetFormatter<T>();
+                    if (typeof(T) == typeof(int) && formatter?.GetType() == typeof(Int32Formatter))
+                    {
+                        emitter.WriteNumbers((int[])(object)value);
+                        break;
+                    }
+                    if (typeof(T) == typeof(long) && formatter?.GetType() == typeof(Int64Formatter))
+                    {
+                        emitter.WriteNumbers((long[])(object)value);
+                        break;
+                    }
                 }
                 SexprSerializer.SerializeResolved(ref emitter, value[i], options, formatter);
             }

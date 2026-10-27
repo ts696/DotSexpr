@@ -1,3 +1,7 @@
+using System.Buffers;
+using System.Globalization;
+using System.Text;
+using DotSexpr.Emitter;
 using DotSexpr.Serializer;
 using DotSexpr.Serializer.Formatters;
 using DotSexpr.Serializer.Resolvers;
@@ -6,6 +10,39 @@ namespace DotSexpr.Tests;
 
 public class ArrayFormatterTests
 {
+    [TestCase(0)]
+    [TestCase(6)]
+    [TestCase(33)]
+    public void IntegerArrays_PreserveValuesAndSeparators(int length)
+    {
+        int[] integers = [0, 1, -1, int.MinValue, int.MaxValue];
+        long[] longs = [0, 1, -1, long.MinValue, long.MaxValue];
+        var intValues = Enumerable.Range(0, length).Select(i => integers[i % integers.Length]).ToArray();
+        var longValues = Enumerable.Range(0, length).Select(i => longs[i % longs.Length]).ToArray();
+        var buffer = new ArrayBufferWriter<byte>();
+        var emitter = new SexprEmitter(buffer);
+        emitter.BeginList();
+        emitter.WriteSymbol("values");
+        SexprSerializer.Serialize(ref emitter, intValues);
+        SexprSerializer.Serialize(ref emitter, longValues);
+        emitter.WriteSymbol("end");
+        emitter.EndList();
+        emitter.Complete();
+
+        var expectedInts = string.Join(" ", intValues.Select(v => v.ToString(CultureInfo.InvariantCulture)));
+        var expectedLongs = string.Join(" ", longValues.Select(v => v.ToString(CultureInfo.InvariantCulture)));
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo($"(values ({expectedInts}) ({expectedLongs}) end)"));
+    }
+
+    [Test]
+    public void IntegerArray_UsesCustomDerivedFormatter()
+    {
+        var resolver = new CountingResolver { IntFormatter = new QuotedInt32Formatter() };
+        var options = new SexprSerializerOptions { Resolver = resolver };
+        Assert.That(SexprSerializer.Serialize(new[] { 1, 2 }, options), Is.EqualTo("(\"1\" \"2\")"));
+        Assert.That(resolver.IntLookups, Is.EqualTo(1));
+    }
+
     [TestCase(0)]
     [TestCase(1)]
     [TestCase(3)]
@@ -78,6 +115,7 @@ public class ArrayFormatterTests
         public int IntLookups { get; private set; }
         public int StringLookups { get; private set; }
         public bool MissingInt { get; init; }
+        public ISexprFormatter<int>? IntFormatter { get; init; }
 
         public ISexprFormatter<T>? GetFormatter<T>()
         {
@@ -85,11 +123,18 @@ public class ArrayFormatterTests
             {
                 IntLookups++;
                 if (MissingInt) return null;
+                if (IntFormatter != null) return (ISexprFormatter<T>)(object)IntFormatter;
             }
             if (typeof(T) == typeof(string)) StringLookups++;
             if (typeof(T) == typeof(int[][]))
                 return (ISexprFormatter<T>)(object)new ArrayFormatter<int[]>();
             return BuiltinResolver.Instance.GetFormatter<T>();
         }
+    }
+
+    private sealed class QuotedInt32Formatter : Int32Formatter, ISexprFormatter<int>
+    {
+        void ISexprFormatter<int>.Serialize(ref SexprEmitter emitter, int value, SexprSerializerOptions options) =>
+            emitter.WriteString(value.ToString(CultureInfo.InvariantCulture));
     }
 }

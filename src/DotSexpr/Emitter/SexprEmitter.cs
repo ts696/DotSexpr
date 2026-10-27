@@ -8,6 +8,8 @@ namespace DotSexpr.Emitter;
 
 public struct SexprEmitter
 {
+    private const int IntegerBatchSize = 32;
+
     public readonly struct EncodedSymbol
     {
         private readonly byte[]? _bytes;
@@ -203,6 +205,50 @@ public struct SexprEmitter
         Span<byte> bytes = stackalloc byte[32];
         Utf8Formatter.TryFormat(value, bytes, out var written);
         WriteValueBytes(bytes.Slice(0, written));
+    }
+
+    internal void WriteNumbers(ReadOnlySpan<int> values)
+    {
+        const int maxBytesPerValue = 12;
+        while (!values.IsEmpty)
+        {
+            var count = Math.Min(values.Length, IntegerBatchSize);
+            var buffer = BeginValue(count * maxBytesPerValue, out var reserved);
+            var position = 0;
+            for (var i = 0; i < count; i++)
+            {
+                if (i > 0)
+                {
+                    buffer[position++] = (byte)' ';
+                }
+                Utf8Formatter.TryFormat(values[i], buffer.Slice(position), out var written);
+                position += written;
+            }
+            _writer.Advance(reserved - buffer.Length + position);
+            values = values.Slice(count);
+        }
+    }
+
+    internal void WriteNumbers(ReadOnlySpan<long> values)
+    {
+        const int maxBytesPerValue = 21;
+        while (!values.IsEmpty)
+        {
+            var count = Math.Min(values.Length, IntegerBatchSize);
+            var buffer = BeginValue(count * maxBytesPerValue, out var reserved);
+            var position = 0;
+            for (var i = 0; i < count; i++)
+            {
+                if (i > 0)
+                {
+                    buffer[position++] = (byte)' ';
+                }
+                Utf8Formatter.TryFormat(values[i], buffer.Slice(position), out var written);
+                position += written;
+            }
+            _writer.Advance(reserved - buffer.Length + position);
+            values = values.Slice(count);
+        }
     }
 
     public void WriteNumber(float value)
