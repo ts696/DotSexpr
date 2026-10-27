@@ -9,14 +9,14 @@ public static class SexprSerializer
 {
     public static string Serialize<T>(T value, SexprSerializerOptions? options = null)
     {
-        using var buffer = new PooledBufferWriter();
+        using var buffer = new PooledBufferWriter(!typeof(T).IsPrimitive && typeof(T) != typeof(string));
         Serialize(buffer, value, options);
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
     public static byte[] SerializeToUtf8Bytes<T>(T value, SexprSerializerOptions? options = null)
     {
-        using var buffer = new PooledBufferWriter();
+        using var buffer = new PooledBufferWriter(!typeof(T).IsPrimitive && typeof(T) != typeof(string));
         Serialize(buffer, value, options);
         return buffer.WrittenSpan.ToArray();
     }
@@ -150,8 +150,19 @@ public static class SexprSerializer
 
     private sealed class PooledBufferWriter : IBufferWriter<byte>, IDisposable
     {
-        private byte[]? _buffer = ArrayPool<byte>.Shared.Rent(256);
+        private const int InitialCapacity = 256;
+        private const int MaxInitialCapacity = 32 * 1024;
+        [ThreadStatic]
+        private static int _capacityHint;
+        private byte[]? _buffer;
         private int _written;
+        private readonly bool _rememberCapacity;
+
+        public PooledBufferWriter(bool rememberCapacity)
+        {
+            _rememberCapacity = rememberCapacity;
+            _buffer = ArrayPool<byte>.Shared.Rent(rememberCapacity && _capacityHint > 0 ? _capacityHint : InitialCapacity);
+        }
 
         public ReadOnlySpan<byte> WrittenSpan =>
             (_buffer ?? throw new ObjectDisposedException(nameof(PooledBufferWriter))).AsSpan(0, _written);
@@ -199,6 +210,10 @@ public static class SexprSerializer
                 return;
             }
             _buffer = null;
+            if (_rememberCapacity)
+            {
+                _capacityHint = Math.Clamp(_written, InitialCapacity, MaxInitialCapacity);
+            }
             _written = 0;
             ArrayPool<byte>.Shared.Return(buffer);
         }

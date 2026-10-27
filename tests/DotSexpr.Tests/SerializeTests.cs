@@ -165,13 +165,14 @@ public partial class SerializeTests
     [Test]
     public void Serialize_Utf8Result_RemainsValidAfterAnotherSerialization()
     {
-        var value = new string('a', 4096) + "東京😀";
+        var value = new Person { Name = new string('a', 4096) + "東京😀" };
         var bytes = SexprSerializer.SerializeToUtf8Bytes(value);
 
-        SexprSerializer.SerializeToUtf8Bytes(new string('b', 6000));
+        SexprSerializer.SerializeToUtf8Bytes(new Person { Name = new string('b', 6000) });
+        SexprSerializer.SerializeToUtf8Bytes(new Person { Name = "Bob" });
 
         using var document = SDocument.Parse(bytes);
-        Assert.That(document.RootNode.GetString(), Is.EqualTo(value));
+        Assert.That(SexprSerializer.Deserialize<Person>(document.RootNode).Name, Is.EqualTo(value.Name));
     }
 
     [Test]
