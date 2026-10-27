@@ -647,25 +647,9 @@ public class SDocument : IDisposable
         }
     }
 
-#if NET8_0_OR_GREATER
-    private static readonly SearchValues<byte> SymbolDelimiters = CreateSymbolDelimiters();
-#endif
-
     private static int GetSymbolLength(ReadOnlySpan<byte> bytes, out int invalidCharacterIndex)
     {
-#if NET8_0_OR_GREATER
-        var idx = bytes.IndexOfAny(SymbolDelimiters);
-#else
-        var idx = -1;
-        for (var i = 0; i < bytes.Length; i++)
-        {
-            if (bytes[i] <= (byte)' ' || bytes[i] is (byte)'(' or (byte)')' or (byte)';' or (byte)'"')
-            {
-                idx = i;
-                break;
-            }
-        }
-#endif
+        var idx = SymbolSyntax.IndexOfInvalidCharacter(bytes);
         invalidCharacterIndex = -1;
         if (idx >= 0)
         {
@@ -777,20 +761,6 @@ public class SDocument : IDisposable
     }
 
 #if NET8_0_OR_GREATER
-    private static SearchValues<byte> CreateSymbolDelimiters()
-    {
-        Span<byte> values = stackalloc byte[37];
-        for (var i = 0; i <= 0x20; i++)
-        {
-            values[i] = (byte)i;
-        }
-        values[33] = (byte)'(';
-        values[34] = (byte)')';
-        values[35] = (byte)';';
-        values[36] = (byte)'"';
-        return SearchValues.Create(values);
-    }
-
     private static SearchValues<byte> CreateStringSpecialCharacters()
     {
         const int controlCharacterCount = 0x20;
