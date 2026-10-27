@@ -177,6 +177,11 @@ public class SDocument : IDisposable
         }
 
         var bytes = _bytes.Slice(token.Offset, token.Length).Span;
+        if (Utf8Parser.TryParse(bytes, out int value, out var bytesConsumed) && bytesConsumed == bytes.Length)
+        {
+            return value;
+        }
+
 #if NET8_0_OR_GREATER
         return int.Parse(bytes, NumberStyles.Float, CultureInfo.InvariantCulture);
 #else
@@ -193,6 +198,11 @@ public class SDocument : IDisposable
         }
 
         var bytes = _bytes.Slice(token.Offset, token.Length).Span;
+        if (Utf8Parser.TryParse(bytes, out long value, out var bytesConsumed) && bytesConsumed == bytes.Length)
+        {
+            return value;
+        }
+
 #if NET8_0_OR_GREATER
         return long.Parse(bytes, NumberStyles.Float, CultureInfo.InvariantCulture);
 #else
