@@ -65,6 +65,41 @@ public partial class EmitterTests
     }
 
     [Test]
+    public void Write_Values_AreVisibleBeforeComplete()
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        var emitter = new SexprEmitter(buffer);
+        emitter.BeginList();
+        emitter.WriteSymbol("f");
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(f"));
+
+        emitter.WriteString("東京😀\n\"\\");
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(f \"東京😀\\n\\\"\\\\\""));
+
+        emitter.WriteNumber(-12);
+        emitter.EndList();
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(f \"東京😀\\n\\\"\\\\\" -12)"));
+        emitter.Complete();
+    }
+
+    [Test]
+    public void WriteString_InvalidUtf16_DoesNotAppendSeparator()
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        var emitter = new SexprEmitter(buffer);
+        emitter.BeginList();
+        emitter.WriteSymbol("f");
+
+        Assert.Throws<SexprSerializerException>(() => emitter.WriteString("bad\ud800"));
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(f"));
+
+        emitter.WriteString("ok");
+        emitter.EndList();
+        emitter.Complete();
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(f \"ok\")"));
+    }
+
+    [Test]
     public void WriteSymbol_LongUnicodeName_RoundTrips()
     {
         var name = new string('あ', 1000);
