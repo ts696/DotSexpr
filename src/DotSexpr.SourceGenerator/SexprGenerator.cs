@@ -242,8 +242,17 @@ public sealed class SexprGenerator : IIncrementalGenerator
         }
         else
         {
+            var builtinTypes = members.Where(member => IsBuiltinMember(member.Type))
+                .Select(member => member.Type.ToDisplayString(NullableTypeFormat)).Distinct().ToList();
             code.Append("public sealed class ").Append(formatterName).Append(" : global::DotSexpr.Serializer.ISexprFormatter<")
                 .Append(fullName).AppendLine("> {");
+            for (var i = 0; i < builtinTypes.Count; i++)
+            {
+                code.Append("private static readonly global::DotSexpr.Serializer.ISexprFormatter<")
+                    .Append(builtinTypes[i]).Append("> BuiltinFormatter").Append(i)
+                    .Append(" = global::DotSexpr.Serializer.Resolvers.BuiltinResolver.Instance.GetFormatter<")
+                    .Append(builtinTypes[i]).AppendLine(">()!;");
+            }
             for (var i = 0; i < members.Count; i++)
             {
                 code.Append("private static readonly global::DotSexpr.Emitter.SexprEmitter.EncodedSymbol Key").Append(i)
@@ -260,7 +269,14 @@ public sealed class SexprGenerator : IIncrementalGenerator
                     .Append("global::DotSexpr.Serializer.SexprSerializer.SerializeProperty<")
                     .Append(member.Type.ToDisplayString(NullableTypeFormat))
                     .Append(">(ref emitter, value.@").Append(member.Symbol.Name).Append(", options, ")
-                    .Append(SymbolDisplay.FormatLiteral(member.Tag, true)).AppendLine(");");
+                    .Append(SymbolDisplay.FormatLiteral(member.Tag, true));
+                var builtinIndex = builtinTypes.IndexOf(member.Type.ToDisplayString(NullableTypeFormat));
+                if (builtinIndex >= 0)
+                {
+                    code.Append(", global::System.Object.ReferenceEquals(options.Resolver, global::DotSexpr.Serializer.Resolvers.DefaultResolver.Instance) ? BuiltinFormatter")
+                        .Append(builtinIndex).Append(" : null");
+                }
+                code.AppendLine(");");
             }
             code.AppendLine("emitter.EndList();\n}");
             code.Append("public ").Append(fullName)
@@ -274,7 +290,14 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 code.Append(i == 0 ? "if" : "else if").Append(" (key.ValueEquals(Key").Append(i).AppendLine(".Utf8Value)) {")
                     .Append("result.@").Append(member.Symbol.Name).Append(" = global::DotSexpr.Serializer.SexprSerializer.DeserializeProperty<")
                     .Append(member.Type.ToDisplayString(NullableTypeFormat)).Append(">(in value, options, ")
-                    .Append(SymbolDisplay.FormatLiteral(member.Tag, true)).AppendLine(");\n}");
+                    .Append(SymbolDisplay.FormatLiteral(member.Tag, true));
+                var builtinIndex = builtinTypes.IndexOf(member.Type.ToDisplayString(NullableTypeFormat));
+                if (builtinIndex >= 0)
+                {
+                    code.Append(", global::System.Object.ReferenceEquals(options.Resolver, global::DotSexpr.Serializer.Resolvers.DefaultResolver.Instance) ? BuiltinFormatter")
+                        .Append(builtinIndex).Append(" : null");
+                }
+                code.AppendLine(");\n}");
             }
             code.AppendLine("}\nreturn result;\n}\n}");
         }
@@ -291,6 +314,16 @@ public sealed class SexprGenerator : IIncrementalGenerator
         var source = CSharpSyntaxTree.ParseText(code.ToString()).GetRoot().NormalizeWhitespace().ToFullString();
         output.AddSource(hint + ".Sexpr.g.cs", SourceText.From(source + "\n", Encoding.UTF8));
         return members;
+    }
+
+    private static bool IsBuiltinMember(ITypeSymbol type)
+    {
+        if (type is IArrayTypeSymbol { Rank: 1, IsSZArray: true } array)
+        {
+            type = array.ElementType;
+        }
+        return type.SpecialType is SpecialType.System_Int32 or SpecialType.System_Int64
+            or SpecialType.System_Single or SpecialType.System_Double or SpecialType.System_String;
     }
 
     private static void AppendArgument(StringBuilder code, ITypeSymbol type)

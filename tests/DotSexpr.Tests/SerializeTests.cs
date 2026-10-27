@@ -250,6 +250,8 @@ public partial class SerializeTests
         var options = new SexprSerializerOptions { Resolver = new CustomResolver() };
         Assert.That(SexprSerializer.Serialize(new Person { Name = "a", Age = 2 }, options), Is.EqualTo("(:Name \"a\" :Age 102)"));
         Assert.That(SexprSerializer.Serialize(new[] { 1, 2 }, options), Is.EqualTo("(101 102)"));
+        Assert.That(SexprSerializer.Serialize(new TaggedNames { Names = ["a", "b"] }, options),
+            Is.EqualTo("(:full-name (\"custom\"))"));
         var expression = SexprSerializer.Deserialize<Expression>("(f x (g y))");
         Assert.That(SexprSerializer.Serialize(expression, options), Is.EqualTo("(f custom-x (g custom-y))"));
     }
@@ -258,6 +260,10 @@ public partial class SerializeTests
     {
         public ISexprFormatter<T>? GetFormatter<T>()
         {
+            if (typeof(T) == typeof(string[]))
+            {
+                return (ISexprFormatter<T>)(object)new CustomStringArrayFormatter();
+            }
             if (typeof(T) == typeof(int))
             {
                 return (ISexprFormatter<T>)(object)new CustomIntFormatter();
@@ -268,6 +274,18 @@ public partial class SerializeTests
             }
             return DotSexpr.Serializer.Resolvers.DefaultResolver.Instance.GetFormatter<T>();
         }
+    }
+
+    private sealed class CustomStringArrayFormatter : ISexprFormatter<string[]>
+    {
+        public void Serialize(ref SexprEmitter emitter, string[] value, SexprSerializerOptions options)
+        {
+            emitter.BeginList();
+            emitter.WriteString("custom");
+            emitter.EndList();
+        }
+
+        public string[] Deserialize(in SNode node, SexprSerializerOptions options) => throw new NotImplementedException();
     }
 
     private sealed class CustomIntFormatter : ISexprFormatter<int>
