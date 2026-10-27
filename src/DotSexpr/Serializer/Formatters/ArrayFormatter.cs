@@ -7,11 +7,16 @@ public class ArrayFormatter<T> : ISexprFormatter<T[]>
     public void Serialize(ref SexprEmitter emitter, T[] value, SexprSerializerOptions options)
     {
         emitter.BeginList();
+        ISexprFormatter<T>? formatter = null;
         for (var i = 0; i < value.Length; i++)
         {
             try
             {
-                SexprSerializer.Serialize(ref emitter, value[i], options);
+                if (i == 0 && value[i] is not null)
+                {
+                    formatter = options.Resolver.GetFormatter<T>();
+                }
+                SexprSerializer.SerializeResolved(ref emitter, value[i], options, formatter);
             }
             catch (SexprSerializerException exception)
             {
@@ -29,12 +34,17 @@ public class ArrayFormatter<T> : ISexprFormatter<T[]>
             throw new SexprSerializerException("An array value must be a list.", node);
         }
         var values = new T[node.Count];
+        ISexprFormatter<T>? formatter = null;
         var index = 0;
         try
         {
             foreach (var child in node)
             {
-                values[index] = SexprSerializer.Deserialize<T>(in child, options);
+                if (index == 0)
+                {
+                    formatter = options.Resolver.GetFormatter<T>();
+                }
+                values[index] = SexprSerializer.DeserializeResolved(in child, options, formatter);
                 index++;
             }
         }
