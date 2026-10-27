@@ -68,15 +68,13 @@ public class ArrayFormatter<T> : ISexprFormatter<T[]>
     }
 }
 
-internal sealed class StringArrayFormatter : ISexprFormatter<string[]>
+internal sealed class StringArrayFormatter : ArrayFormatter<string>, ISexprFormatter<string[]>
 {
-    private static readonly ArrayFormatter<string> Fallback = new();
-
-    public void Serialize(ref SexprEmitter emitter, string[] value, SexprSerializerOptions options)
+    public new void Serialize(ref SexprEmitter emitter, string[] value, SexprSerializerOptions options)
     {
         if (!ReferenceEquals(options.Resolver, DefaultResolver.Instance))
         {
-            Fallback.Serialize(ref emitter, value, options);
+            base.Serialize(ref emitter, value, options);
             return;
         }
         emitter.BeginList();
@@ -102,7 +100,4 @@ internal sealed class StringArrayFormatter : ISexprFormatter<string[]>
         }
         emitter.EndList();
     }
-
-    public string[] Deserialize(in SNode node, SexprSerializerOptions options) =>
-        Fallback.Deserialize(in node, options);
 }
