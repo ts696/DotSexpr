@@ -267,16 +267,30 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 .AppendLine(" Deserialize(in global::DotSexpr.SNode node, global::DotSexpr.Serializer.SexprSerializerOptions options) {")
                 .AppendLine("var reader = new global::DotSexpr.Serializer.SexprObjectReader(in node);")
                 .Append("var result = new ").Append(fullName).AppendLine("();")
-                .AppendLine("while (reader.MoveNext(out var key, out var value)) {");
-            for (var i = 0; i < members.Count; i++)
+                .AppendLine("while (reader.MoveNext(out var key, out var value)) {")
+                .AppendLine("var keyBytes = key.GetRawUtf8().Span;")
+                .AppendLine("switch (keyBytes.Length) {");
+            var keyGroups = members.Select((member, index) => new { Member = member, Index = index })
+                .GroupBy(item => Encoding.UTF8.GetByteCount(":" + item.Member.Tag))
+                .OrderBy(group => group.Key);
+            foreach (var group in keyGroups)
             {
-                var member = members[i];
-                code.Append(i == 0 ? "if" : "else if").Append(" (key.ValueEquals(Key").Append(i).AppendLine(".Utf8Value)) {")
-                    .Append("result.@").Append(member.Symbol.Name).Append(" = global::DotSexpr.Serializer.SexprSerializer.DeserializeProperty<")
-                    .Append(member.Type.ToDisplayString(NullableTypeFormat)).Append(">(in value, options, ")
-                    .Append(SymbolDisplay.FormatLiteral(member.Tag, true)).AppendLine(");\n}");
+                code.Append("case ").Append(group.Key).AppendLine(":");
+                var first = true;
+                foreach (var item in group)
+                {
+                    var member = item.Member;
+                    code.Append(first ? "if" : "else if")
+                        .Append(" (global::System.MemoryExtensions.SequenceEqual(keyBytes, Key")
+                        .Append(item.Index).AppendLine(".Utf8Value)) {")
+                        .Append("result.@").Append(member.Symbol.Name).Append(" = global::DotSexpr.Serializer.SexprSerializer.DeserializeProperty<")
+                        .Append(member.Type.ToDisplayString(NullableTypeFormat)).Append(">(in value, options, ")
+                        .Append(SymbolDisplay.FormatLiteral(member.Tag, true)).AppendLine(");\n}");
+                    first = false;
+                }
+                code.AppendLine("break;");
             }
-            code.AppendLine("}\nreturn result;\n}\n}");
+            code.AppendLine("}\n}\nreturn result;\n}\n}");
         }
         foreach (var _ in scopes) code.AppendLine("}");
         if (!type.ContainingNamespace.IsGlobalNamespace)
