@@ -1,6 +1,7 @@
 # DotSexpr
 
 DotSexpr is an S-expression parser and serializer for .NET and Unity, targeting .NET 10 and .NET Standard 2.1.
+The .NET 10 target supports NativeAOT.
 
 The parser design was inspired by [REDox](https://github.com/CAPCOM-TD-OSS/REDox).
 

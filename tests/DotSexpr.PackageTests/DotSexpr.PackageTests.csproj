@@ -6,6 +6,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <IsPackable>false</IsPackable>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    <ILLinkTreatWarningsAsErrors>true</ILLinkTreatWarningsAsErrors>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(PublishAot)' == 'true'">
+    <DefineConstants>$(DefineConstants);NATIVE_AOT_TEST</DefineConstants>
   </PropertyGroup>
   <!-- CI sets UseNuGetPackage=true to validate the packed artifacts instead of project outputs. -->
   <ItemGroup Condition="'$(UseNuGetPackage)' == 'true'">
@@ -15,5 +20,9 @@
     <ProjectReference Include="../../src/DotSexpr/DotSexpr.csproj" />
     <ProjectReference Include="../../src/DotSexpr.SourceGenerator/DotSexpr.SourceGenerator.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <!-- Analyze the entire runtime library when publishing the smoke test with Native AOT. -->
+  <ItemGroup Condition="'$(PublishAot)' == 'true'">
+    <TrimmerRootAssembly Include="DotSexpr" />
   </ItemGroup>
 </Project>
