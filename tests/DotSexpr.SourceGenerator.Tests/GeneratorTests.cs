@@ -308,6 +308,9 @@ public class GeneratorTests
     [TestCase("[SexprObject] public partial class Item { [SexprTag(\"\")] public int Value; }", "DSX005")]
     [TestCase("[SexprObject] public partial class Item { [SexprTag(\":x\")] public int Value; }", "DSX005")]
     [TestCase("[SexprObject] public partial class Item { [SexprTag(\"a b\")] public int Value; }", "DSX005")]
+    [TestCase("[SexprObject] public partial class Item { [SexprTag(\"bad\\0key\")] public int Value; }", "DSX005")]
+    [TestCase("[SexprObject] public partial class Item { [SexprTag(\"bad\\u001fkey\")] public int Value; }", "DSX005")]
+    [TestCase("[SexprObject] public partial class Item { [SexprTag(\"bad\\ud800\")] public int Value; }", "DSX005")]
     [TestCase("[SexprObject] public partial class Item { [SexprTag(\"x\")] public int A; [SexprTag(\"x\")] public int B; }", "DSX005")]
     public void Generate_UnsupportedDeclarations_ReportsActionableDiagnostic(string source, string id)
     {
