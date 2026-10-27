@@ -75,6 +75,27 @@ public static class SexprSerializer
         }
     }
 
+    public static void SerializeProperty<T>(ref SexprEmitter emitter, T value, SexprSerializerOptions options,
+        string name, ISexprFormatter<T>? formatter)
+    {
+        try
+        {
+            if (formatter == null)
+            {
+                Serialize(ref emitter, value, options);
+            }
+            else
+            {
+                SerializeResolved(ref emitter, value, options, formatter);
+            }
+        }
+        catch (SexprSerializerException exception)
+        {
+            exception.PrependProperty(name);
+            throw;
+        }
+    }
+
     public static T Deserialize<T>(string text, SexprSerializerOptions? options = null)
     {
         using var document = SDocument.Parse(text);
@@ -141,6 +162,21 @@ public static class SexprSerializer
         try
         {
             return Deserialize<T>(in node, options);
+        }
+        catch (SexprSerializerException exception)
+        {
+            exception.PrependProperty(name);
+            throw;
+        }
+    }
+
+    public static T DeserializeProperty<T>(in SNode node, SexprSerializerOptions options, string name,
+        ISexprFormatter<T>? formatter)
+    {
+        try
+        {
+            return formatter == null ? Deserialize<T>(in node, options)
+                : DeserializeResolved(in node, options, formatter);
         }
         catch (SexprSerializerException exception)
         {
