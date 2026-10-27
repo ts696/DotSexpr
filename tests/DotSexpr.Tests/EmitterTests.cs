@@ -121,6 +121,45 @@ public partial class EmitterTests
         Assert.That(buffer.WrittenCount, Is.Zero);
     }
 
+    [TestCase(":Name")]
+    [TestCase(":名前😀")]
+    public void WriteSymbol_EncodedSymbol_CanBeReused(string name)
+    {
+        var symbol = SexprEmitter.EncodedSymbol.Encode(name);
+        var buffer = new ArrayBufferWriter<byte>();
+        var emitter = new SexprEmitter(buffer);
+        emitter.BeginList();
+        emitter.WriteSymbol(symbol);
+        emitter.WriteNumber(1);
+        emitter.WriteSymbol(symbol);
+        emitter.WriteString("value");
+        emitter.EndList();
+        emitter.Complete();
+
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo($"({name} 1 {name} \"value\")"));
+    }
+
+    [Test]
+    public void EncodedSymbol_InvalidValues_AreRejected()
+    {
+        foreach (var value in new[] { "", "123", "bad key", "bad\0key", "bad\ud800" })
+        {
+            Assert.Throws<SexprSerializerException>(() => SexprEmitter.EncodedSymbol.Encode(value));
+        }
+    }
+
+    [Test]
+    public void WriteSymbol_DefaultEncodedSymbol_IsRejectedBeforeOutput()
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        var emitter = new SexprEmitter(buffer);
+        Assert.Throws<SexprSerializerException>(() => emitter.WriteSymbol(default(SexprEmitter.EncodedSymbol)));
+        Assert.That(buffer.WrittenCount, Is.Zero);
+        emitter.WriteSymbol(SexprEmitter.EncodedSymbol.Encode(":Name"));
+        emitter.Complete();
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo(":Name"));
+    }
+
     [Test]
     public void EndList_WithoutOpenList_IsRejected()
     {

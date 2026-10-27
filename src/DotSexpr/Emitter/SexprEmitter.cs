@@ -8,6 +8,36 @@ namespace DotSexpr.Emitter;
 
 public struct SexprEmitter
 {
+    public readonly struct EncodedSymbol
+    {
+        private readonly byte[]? _bytes;
+
+        private EncodedSymbol(byte[] bytes)
+        {
+            _bytes = bytes;
+        }
+
+        public ReadOnlySpan<byte> Utf8Value => _bytes;
+
+        public static EncodedSymbol Encode(string value)
+        {
+            if (value == null)
+            {
+                throw SexprSerializerException.ForSerialization("A symbol name cannot be null.");
+            }
+            try
+            {
+                var bytes = Utf8.GetBytes(value);
+                ValidateSymbol(bytes);
+                return new EncodedSymbol(bytes);
+            }
+            catch (EncoderFallbackException exception)
+            {
+                throw SexprSerializerException.ForSerialization("The symbol contains invalid UTF-16.", exception);
+            }
+        }
+    }
+
     private static readonly Encoding Utf8 = new UTF8Encoding(false, true);
 #if NET8_0_OR_GREATER
     private static readonly SearchValues<char> StringSpecialCharacters = CreateStringSpecialCharacters();
@@ -124,6 +154,22 @@ public struct SexprEmitter
 
     public void WriteSymbol(ReadOnlySpan<byte> value)
     {
+        ValidateSymbol(value);
+        WriteValueBytes(value);
+    }
+
+    public void WriteSymbol(EncodedSymbol value)
+    {
+        var bytes = value.Utf8Value;
+        if (bytes.IsEmpty)
+        {
+            throw SexprSerializerException.ForSerialization("Initialize the encoded symbol before writing.");
+        }
+        WriteValueBytes(bytes);
+    }
+
+    private static void ValidateSymbol(ReadOnlySpan<byte> value)
+    {
         try
         {
             Utf8.GetCharCount(value);
@@ -143,7 +189,6 @@ public struct SexprEmitter
                 throw SexprSerializerException.ForSerialization("A symbol cannot contain whitespace, control characters, parentheses, semicolons, or quotes.");
             }
         }
-        WriteValueBytes(value);
     }
 
     public void WriteNumber(int value)

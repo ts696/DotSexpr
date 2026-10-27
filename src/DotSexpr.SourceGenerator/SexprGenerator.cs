@@ -246,9 +246,9 @@ public sealed class SexprGenerator : IIncrementalGenerator
                 .Append(fullName).AppendLine("> {");
             for (var i = 0; i < members.Count; i++)
             {
-                code.Append("private static readonly byte[] Key").Append(i)
-                    .Append(" = new byte[] { ").Append(string.Join(", ", Encoding.UTF8.GetBytes(":" + members[i].Tag)))
-                    .AppendLine(" };");
+                code.Append("private static readonly global::DotSexpr.Emitter.SexprEmitter.EncodedSymbol Key").Append(i)
+                    .Append(" = global::DotSexpr.Emitter.SexprEmitter.EncodedSymbol.Encode(")
+                    .Append(SymbolDisplay.FormatLiteral(":" + members[i].Tag, true)).AppendLine(");");
             }
             code.Append("public void Serialize(ref global::DotSexpr.Emitter.SexprEmitter emitter, ").Append(fullName)
                 .AppendLine(" value, global::DotSexpr.Serializer.SexprSerializerOptions options) {")
@@ -271,7 +271,7 @@ public sealed class SexprGenerator : IIncrementalGenerator
             for (var i = 0; i < members.Count; i++)
             {
                 var member = members[i];
-                code.Append(i == 0 ? "if" : "else if").Append(" (key.ValueEquals(Key").Append(i).AppendLine(")) {")
+                code.Append(i == 0 ? "if" : "else if").Append(" (key.ValueEquals(Key").Append(i).AppendLine(".Utf8Value)) {")
                     .Append("result.@").Append(member.Symbol.Name).Append(" = global::DotSexpr.Serializer.SexprSerializer.DeserializeProperty<")
                     .Append(member.Type.ToDisplayString(NullableTypeFormat)).Append(">(in value, options, ")
                     .Append(SymbolDisplay.FormatLiteral(member.Tag, true)).AppendLine(");\n}");
@@ -656,7 +656,8 @@ public sealed class SexprGenerator : IIncrementalGenerator
                     continue;
                 }
                 var tag = tagAttribute == null ? member.Name : tagAttribute.ConstructorArguments.FirstOrDefault().Value as string;
-                if (string.IsNullOrEmpty(tag) || tag!.Any(c => char.IsWhiteSpace(c) || c is ':' or '(' or ')' or '"' or ';') || !tags.Add(tag!))
+                if (string.IsNullOrEmpty(tag) || tag!.Any(c => char.IsWhiteSpace(c) || c == ':') ||
+                    !IsCallName(":" + tag) || !tags.Add(tag!))
                 {
                     Report(output, InvalidTag, member, tag ?? "", member.Name);
                     invalid = true;
