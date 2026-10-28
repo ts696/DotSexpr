@@ -75,6 +75,15 @@ public partial class EmitterTests
         Assert.That(SexprSerializer.Serialize(value), Is.EqualTo("\"" + value + "\""));
     }
 
+    [TestCase(" !#()[]{};|~")]
+    [TestCase("abcd日本")]
+    [TestCase("abcd\u007f")]
+    public void WriteString_ShortMixedCharacters_RoundTrips(string value)
+    {
+        var text = SexprSerializer.Serialize(value);
+        Assert.That(SexprSerializer.Deserialize<string>(text), Is.EqualTo(value));
+    }
+
     [Test]
     public void Write_NestedListsAndAtoms_SeparatesValuesWithoutExtraSpaces()
     {

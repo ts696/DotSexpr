@@ -9,6 +9,7 @@ namespace DotSexpr.Emitter;
 public struct SexprEmitter
 {
     private const int IntegerBatchSize = 32;
+    private const int MaxShortAsciiStringLength = 16;
 
     public readonly struct EncodedSymbol
     {
@@ -96,6 +97,11 @@ public struct SexprEmitter
         try
         {
             var text = value.AsSpan();
+            if (text.Length <= MaxShortAsciiStringLength && (text.IsEmpty || text[0] <= 0x7f)
+                && TryWriteShortAsciiString(text))
+            {
+                return;
+            }
             var length = checked(Utf8.GetByteCount(text) + 2);
             var firstEscape = IndexOfStringSpecialCharacter(text);
             for (var i = firstEscape; i >= 0;)
@@ -313,6 +319,28 @@ public struct SexprEmitter
         var buffer = BeginValue(bytes.Length, out var written);
         bytes.CopyTo(buffer);
         _writer.Advance(written);
+    }
+
+    private bool TryWriteShortAsciiString(ReadOnlySpan<char> text)
+    {
+        foreach (var character in text)
+        {
+            if ((uint)(character - ' ') > '~' - ' ' || character is '"' or '\\')
+            {
+                return false;
+            }
+        }
+
+        var buffer = BeginValue(text.Length + 2, out var written);
+        buffer[0] = (byte)'"';
+        var content = buffer.Slice(1, text.Length);
+        for (var i = 0; i < text.Length; i++)
+        {
+            content[i] = (byte)text[i];
+        }
+        buffer[text.Length + 1] = (byte)'"';
+        _writer.Advance(written);
+        return true;
     }
 
     private static int IndexOfStringSpecialCharacter(ReadOnlySpan<char> text)
