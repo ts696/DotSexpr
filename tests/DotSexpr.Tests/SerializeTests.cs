@@ -133,12 +133,26 @@ public partial class SerializeTests
     [TestCase("a b;()#|comment|#")]
     [TestCase("quote\" and slash\\")]
     [TestCase("東京😀")]
+    [TestCase("a\"東京😀")]
     public void Serialize_String_QuotesEscapesAndRoundTrips(string value)
     {
         var text = SexprSerializer.Serialize(value);
         using var document = SDocument.Parse(text);
         Assert.That(document.RootNode.Token.IsString, Is.True);
         Assert.That(SexprSerializer.Deserialize<string>(text), Is.EqualTo(value));
+    }
+
+    [TestCase(64)]
+    [TestCase(65)]
+    public void Serialize_EscapedAsciiString_ProducesExactOutput(int length)
+    {
+        var prefix = new string('a', length - 2);
+        var value = prefix + "\"\n";
+        var expected = "\"" + prefix + "\\\"\\n\"";
+        var writer = new ArrayBufferWriter<byte>();
+        SexprSerializer.Serialize(writer, value);
+        Assert.That(SexprSerializer.Serialize(value), Is.EqualTo(expected));
+        Assert.That(Encoding.UTF8.GetString(writer.WrittenSpan), Is.EqualTo(expected));
     }
 
     [Test]
@@ -202,10 +216,11 @@ public partial class SerializeTests
         Assert.That(Assert.Throws<SexprSerializerException>(() => SexprSerializer.Serialize<string>(null!))!.Path, Is.EqualTo("$"));
     }
 
-    [Test]
-    public void Serialize_InvalidUtf16_PreservesCauseAndPath()
+    [TestCase("")]
+    [TestCase("\"")]
+    public void Serialize_InvalidUtf16_PreservesCauseAndPath(string prefix)
     {
-        var value = new Person { Name = new string((char)0xd800, 1) };
+        var value = new Person { Name = prefix + new string((char)0xd800, 1) };
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Serialize(value))!;
         Assert.That(error.Path, Is.EqualTo("$.Name"));
         Assert.That(error.InnerException, Is.TypeOf<EncoderFallbackException>());

@@ -9,6 +9,7 @@ namespace DotSexpr.Emitter;
 public struct SexprEmitter
 {
     private const int IntegerBatchSize = 32;
+    private const int MaxEscapedAsciiStringLength = 64;
     private const int MaxShortAsciiStringLength = 16;
 
     public readonly struct EncodedSymbol
@@ -102,8 +103,12 @@ public struct SexprEmitter
             {
                 return;
             }
-            var length = checked(Utf8.GetByteCount(text) + 2);
             var firstEscape = IndexOfStringSpecialCharacter(text);
+            if (firstEscape >= 0 && text.Length <= MaxEscapedAsciiStringLength && TryWriteEscapedAsciiString(text))
+            {
+                return;
+            }
+            var length = checked(Utf8.GetByteCount(text) + 2);
             for (var i = firstEscape; i >= 0;)
             {
                 length = checked(length + (text[i] is '"' or '\\' or '\b' or '\f' or '\n' or '\r' or '\t' ? 1 : 5));
@@ -339,6 +344,39 @@ public struct SexprEmitter
             content[i] = (byte)text[i];
         }
         buffer[text.Length + 1] = (byte)'"';
+        _writer.Advance(written);
+        return true;
+    }
+
+    private bool TryWriteEscapedAsciiString(ReadOnlySpan<char> text)
+    {
+        var length = text.Length + 2;
+        foreach (var character in text)
+        {
+            if (character > 0x7f)
+            {
+                return false;
+            }
+            if (character < ' ' || character is '"' or '\\')
+            {
+                length += character is '"' or '\\' or '\b' or '\f' or '\n' or '\r' or '\t' ? 1 : 5;
+            }
+        }
+        var buffer = BeginValue(length, out var written);
+        buffer[0] = (byte)'"';
+        var position = 1;
+        foreach (var character in text)
+        {
+            if (character < ' ' || character is '"' or '\\')
+            {
+                position += WriteEscape(character, buffer.Slice(position));
+            }
+            else
+            {
+                buffer[position++] = (byte)character;
+            }
+        }
+        buffer[position] = (byte)'"';
         _writer.Advance(written);
         return true;
     }
