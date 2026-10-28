@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Buffers.Text;
 using System.Text;
+using DotSexpr.Internal;
 using DotSexpr.Serializer;
 
 namespace DotSexpr.Emitter;
@@ -195,12 +196,9 @@ public struct SexprEmitter
         {
             throw SexprSerializerException.ForSerialization("A symbol must be non-empty and must not be a number or a block comment.");
         }
-        foreach (var character in value)
+        if (SymbolSyntax.IndexOfInvalidCharacter(value) >= 0)
         {
-            if (character <= (byte)' ' || character is (byte)'(' or (byte)')' or (byte)';' or (byte)'"')
-            {
-                throw SexprSerializerException.ForSerialization("A symbol cannot contain whitespace, control characters, parentheses, semicolons, or quotes.");
-            }
+            throw SexprSerializerException.ForSerialization("A symbol cannot contain whitespace, control characters, parentheses, semicolons, or quotes.");
         }
     }
 

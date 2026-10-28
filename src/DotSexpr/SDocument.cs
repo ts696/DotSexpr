@@ -533,7 +533,12 @@ public class SDocument : IDisposable
                 }
                 else
                 {
-                    var elemLength = GetSymbolLength(bytes.Slice(bufferIndex));
+                    var elemLength = GetSymbolLength(bytes.Slice(bufferIndex), out var invalidCharacterIndex);
+                    if (invalidCharacterIndex >= 0)
+                    {
+                        throw new SexprParserException("A symbol cannot contain control characters or quotes.",
+                            bytes, bufferIndex + invalidCharacterIndex);
+                    }
 
                     var elemSpan = bytes.Slice(bufferIndex, elemLength);
                     var kind = IsNumber(elemSpan) ? STokenKind.Number : STokenKind.Symbol;
@@ -663,28 +668,18 @@ public class SDocument : IDisposable
         }
     }
 
-#if NET8_0_OR_GREATER
-    private static readonly SearchValues<byte> SymbolDelimiters = SearchValues.Create(" \n\r\t();"u8);
-#endif
-
-    private static int GetSymbolLength(ReadOnlySpan<byte> bytes)
+    private static int GetSymbolLength(ReadOnlySpan<byte> bytes, out int invalidCharacterIndex)
     {
-#if NET8_0_OR_GREATER
-        var idx = bytes.IndexOfAny(SymbolDelimiters);
-#else
-        const ulong delimiters = (1UL << '\t') | (1UL << '\n') | (1UL << '\r') | (1UL << ' ')
-            | (1UL << '(') | (1UL << ')') | (1UL << ';');
-        var idx = 0;
-        while (idx < bytes.Length)
+        var idx = SymbolSyntax.IndexOfInvalidCharacter(bytes);
+        invalidCharacterIndex = -1;
+        if (idx >= 0)
         {
-            var value = bytes[idx];
-            if (value <= ';' && ((1UL << value) & delimiters) != 0)
+            var character = bytes[idx];
+            if (character == '"' || (character < ' ' && character is not ((byte)'\n' or (byte)'\r' or (byte)'\t')))
             {
-                break;
+                invalidCharacterIndex = idx;
             }
-            idx++;
         }
-#endif
         return idx >= 0 ? idx : bytes.Length;
     }
 
