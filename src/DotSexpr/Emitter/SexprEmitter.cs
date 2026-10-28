@@ -3,6 +3,10 @@ using System.Buffers;
 using System.Buffers.Text;
 using System.Text;
 using DotSexpr.Serializer;
+#if NET8_0_OR_GREATER
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+#endif
 
 namespace DotSexpr.Emitter;
 
@@ -323,6 +327,12 @@ public struct SexprEmitter
 
     private bool TryWriteShortAsciiString(ReadOnlySpan<char> text)
     {
+#if NET8_0_OR_GREATER
+        if (Vector128.IsHardwareAccelerated && text.Length >= 4 && text.Length <= Vector128<byte>.Count)
+        {
+            return TryWriteVectorAsciiString(text);
+        }
+#endif
         foreach (var character in text)
         {
             if ((uint)(character - ' ') > '~' - ' ' || character is '"' or '\\')
@@ -342,6 +352,60 @@ public struct SexprEmitter
         _writer.Advance(written);
         return true;
     }
+
+#if NET8_0_OR_GREATER
+    private bool TryWriteVectorAsciiString(ReadOnlySpan<char> text)
+    {
+        Vector128<ushort> first;
+        Vector128<ushort> last;
+        var wide = text.Length >= Vector128<ushort>.Count;
+        if (wide)
+        {
+            var source = MemoryMarshal.Cast<char, ushort>(text);
+            first = Vector128.LoadUnsafe(ref MemoryMarshal.GetReference(source));
+            last = Vector128.LoadUnsafe(ref MemoryMarshal.GetReference(source), (nuint)(source.Length - Vector128<ushort>.Count));
+        }
+        else
+        {
+            first = Vector128.CreateScalar(MemoryMarshal.Read<ulong>(MemoryMarshal.AsBytes(text))).AsUInt16();
+            last = Vector128.CreateScalar(MemoryMarshal.Read<ulong>(MemoryMarshal.AsBytes(text.Slice(text.Length - 4)))).AsUInt16();
+        }
+        var mask = wide ? 0xffffu : 0xffu;
+        if (((GetInvalidAsciiMask(first) | GetInvalidAsciiMask(last)) & mask) != 0)
+        {
+            return false;
+        }
+        var bytes = Vector128.Narrow(first, last);
+        var buffer = BeginValue(text.Length + 2, out var written);
+        buffer[0] = (byte)'"';
+        if (wide)
+        {
+            var start = bytes.AsUInt64().GetElement(0);
+            var end = bytes.AsUInt64().GetElement(1);
+            MemoryMarshal.Write(buffer.Slice(1), in start);
+            MemoryMarshal.Write(buffer.Slice(text.Length - 7), in end);
+        }
+        else
+        {
+            var start = bytes.AsUInt32().GetElement(0);
+            var end = bytes.AsUInt32().GetElement(2);
+            MemoryMarshal.Write(buffer.Slice(1), in start);
+            MemoryMarshal.Write(buffer.Slice(text.Length - 3), in end);
+        }
+        buffer[text.Length + 1] = (byte)'"';
+        _writer.Advance(written);
+        return true;
+    }
+
+    private static uint GetInvalidAsciiMask(Vector128<ushort> text)
+    {
+        var invalid = Vector128.GreaterThan(Vector128.Subtract(text, Vector128.Create((ushort)' ')),
+            Vector128.Create((ushort)('~' - ' ')));
+        invalid |= Vector128.Equals(text, Vector128.Create((ushort)'"'))
+            | Vector128.Equals(text, Vector128.Create((ushort)'\\'));
+        return Vector128.ExtractMostSignificantBits(invalid.AsByte());
+    }
+#endif
 
     private static int IndexOfStringSpecialCharacter(ReadOnlySpan<char> text)
     {
