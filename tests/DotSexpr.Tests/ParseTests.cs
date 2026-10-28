@@ -4,6 +4,19 @@ namespace DotSexpr.Tests;
 
 public class ParseTests
 {
+    [TestCase(63)]
+    [TestCase(64)]
+    [TestCase(65)]
+    public void GetString_ShortUnicodeByteBoundary_PreservesValue(int length)
+    {
+        var value = "😀" + new string('あ', 19) + new string('x', length - 61);
+        var text = "\"" + value + "\"";
+        using var fromText = SDocument.Parse(text);
+        using var fromBytes = SDocument.Parse(Encoding.UTF8.GetBytes(text));
+        Assert.That(fromText.RootNode.GetString(), Is.EqualTo(value));
+        Assert.That(fromBytes.RootNode.GetString(), Is.EqualTo(value));
+    }
+
     [TestCase("\n")]
     [TestCase("\r\n")]
     [TestCase("\r")]

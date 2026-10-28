@@ -164,8 +164,18 @@ public class SDocument : IDisposable
             }
         }
 
-        var str = Encoding.UTF8.GetString(_bytes.Slice(token.Offset + 1, token.Length - 2).Span);
-        return str;
+        if (span.Length <= 64 && !span.IsEmpty && span[0] > 0x7f)
+        {
+            return DecodeShortUnicodeString(span);
+        }
+        return Encoding.UTF8.GetString(span);
+    }
+
+    private static string DecodeShortUnicodeString(ReadOnlySpan<byte> bytes)
+    {
+        Span<char> characters = stackalloc char[64];
+        var written = Encoding.UTF8.GetChars(bytes, characters);
+        return new string(characters.Slice(0, written));
     }
 
     public int GetInt32(SToken token)
