@@ -10,6 +10,7 @@ public struct SexprEmitter
 {
     private const int IntegerBatchSize = 32;
     private const int MaxEscapedAsciiStringLength = 64;
+    private const int MaxShortUnicodeStringLength = 64;
 
     public readonly struct EncodedSymbol
     {
@@ -113,6 +114,25 @@ public struct SexprEmitter
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private void WriteStringUtf8(ReadOnlySpan<char> text, int firstEscape)
     {
+        if (!text.IsEmpty && text[0] > 0x7f && firstEscape < 0
+            && text.Length <= MaxShortUnicodeStringLength && _depth > 0)
+        {
+            var neededSeparator = _needsSeparator;
+            try
+            {
+                var unicodeBuffer = BeginValue(text.Length * 3 + 2, out var reserved);
+                unicodeBuffer[0] = (byte)'"';
+                var unicodeLength = Utf8.GetBytes(text, unicodeBuffer.Slice(1));
+                unicodeBuffer[unicodeLength + 1] = (byte)'"';
+                _writer.Advance(reserved - unicodeBuffer.Length + unicodeLength + 2);
+            }
+            catch (EncoderFallbackException)
+            {
+                _needsSeparator = neededSeparator;
+                throw;
+            }
+            return;
+        }
         var length = checked(Utf8.GetByteCount(text) + 2);
         for (var i = firstEscape; i >= 0;)
         {

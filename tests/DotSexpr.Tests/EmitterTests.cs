@@ -82,21 +82,37 @@ public partial class EmitterTests
         emitter.Complete();
     }
 
-    [Test]
-    public void WriteString_InvalidUtf16_DoesNotAppendSeparator()
+    [TestCase("bad")]
+    [TestCase("あ")]
+    public void WriteString_InvalidUtf16_DoesNotAppendSeparator(string prefix)
     {
         var buffer = new ArrayBufferWriter<byte>();
         var emitter = new SexprEmitter(buffer);
         emitter.BeginList();
         emitter.WriteSymbol("f");
 
-        Assert.Throws<SexprSerializerException>(() => emitter.WriteString("bad\ud800"));
+        Assert.Throws<SexprSerializerException>(() => emitter.WriteString(prefix + "\ud800"));
         Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(f"));
 
         emitter.WriteString("ok");
         emitter.EndList();
         emitter.Complete();
         Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(f \"ok\")"));
+    }
+
+    [TestCase(64)]
+    [TestCase(65)]
+    public void WriteString_NestedUnicodeBoundary_PreservesValue(int length)
+    {
+        var value = new string('あ', length - 2) + "😀";
+        var buffer = new ArrayBufferWriter<byte>();
+        var emitter = new SexprEmitter(buffer);
+        emitter.BeginList();
+        emitter.WriteString(value);
+        emitter.WriteString("tail");
+        emitter.EndList();
+        emitter.Complete();
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(\"" + value + "\" \"tail\")"));
     }
 
     [Test]
