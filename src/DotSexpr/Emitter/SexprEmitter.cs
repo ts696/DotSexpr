@@ -9,6 +9,40 @@ namespace DotSexpr.Emitter;
 
 public struct SexprEmitter
 {
+    private const int IntegerBatchSize = 32;
+    private const int MaxEscapedAsciiStringLength = 64;
+    private const int MaxShortAsciiStringLength = 16;
+
+    public readonly struct EncodedSymbol
+    {
+        private readonly byte[]? _bytes;
+
+        private EncodedSymbol(byte[] bytes)
+        {
+            _bytes = bytes;
+        }
+
+        public ReadOnlySpan<byte> Utf8Value => _bytes;
+
+        public static EncodedSymbol Encode(string value)
+        {
+            if (value == null)
+            {
+                throw SexprSerializerException.ForSerialization("A symbol name cannot be null.");
+            }
+            try
+            {
+                var bytes = Utf8.GetBytes(value);
+                ValidateSymbol(bytes);
+                return new EncodedSymbol(bytes);
+            }
+            catch (EncoderFallbackException exception)
+            {
+                throw SexprSerializerException.ForSerialization("The symbol contains invalid UTF-16.", exception);
+            }
+        }
+    }
+
     private static readonly Encoding Utf8 = new UTF8Encoding(false, true);
 #if NET8_0_OR_GREATER
     private static readonly SearchValues<char> StringSpecialCharacters = CreateStringSpecialCharacters();
@@ -38,8 +72,9 @@ public struct SexprEmitter
         {
             throw SexprSerializerException.ForSerialization($"Serialization exceeds the maximum depth of {_maxDepth}.");
         }
-        BeginValue();
-        WriteByte((byte)'(');
+        var buffer = BeginValue(1, out var written);
+        buffer[0] = (byte)'(';
+        _writer.Advance(written);
         _depth++;
         _needsSeparator = false;
     }
@@ -63,49 +98,40 @@ public struct SexprEmitter
         }
         try
         {
-            Utf8.GetByteCount(value.AsSpan());
-            BeginValue();
-            WriteByte((byte)'"');
-            var start = 0;
-            for (var i = 0; i < value.Length; i++)
+            var text = value.AsSpan();
+            if (text.Length <= MaxShortAsciiStringLength && (text.IsEmpty || text[0] <= 0x7f)
+                && TryWriteShortAsciiString(text))
             {
-                var character = value[i];
-                if (character >= ' ' && character != '"' && character != '\\')
-                {
-#if NET8_0_OR_GREATER
-                    // Amortize the search over long plain runs, not escape-heavy text.
-                    if (i - start >= 16 && value.Length - i >= 16)
-                    {
-                        var found = value.AsSpan(i).IndexOfAny(StringSpecialCharacters);
-                        if (found < 0)
-                        {
-                            break;
-                        }
-                        i += found;
-                        character = value[i];
-                    }
-                    else
-#endif
-                    {
-                        continue;
-                    }
-                }
-                WriteText(value.AsSpan(start, i - start));
-                switch (character)
-                {
-                    case '"': WriteBytes("\\\""u8); break;
-                    case '\\': WriteBytes("\\\\"u8); break;
-                    case '\b': WriteBytes("\\b"u8); break;
-                    case '\f': WriteBytes("\\f"u8); break;
-                    case '\n': WriteBytes("\\n"u8); break;
-                    case '\r': WriteBytes("\\r"u8); break;
-                    case '\t': WriteBytes("\\t"u8); break;
-                    default: WriteControlCharacter(character); break;
-                }
-                start = i + 1;
+                return;
             }
-            WriteText(value.AsSpan(start));
-            WriteByte((byte)'"');
+            var firstEscape = IndexOfStringSpecialCharacter(text);
+            if (firstEscape >= 0 && text.Length <= MaxEscapedAsciiStringLength && TryWriteEscapedAsciiString(text))
+            {
+                return;
+            }
+            var length = checked(Utf8.GetByteCount(text) + 2);
+            for (var i = firstEscape; i >= 0;)
+            {
+                length = checked(length + (text[i] is '"' or '\\' or '\b' or '\f' or '\n' or '\r' or '\t' ? 1 : 5));
+                var next = IndexOfStringSpecialCharacter(text.Slice(i + 1));
+                i = next < 0 ? -1 : i + 1 + next;
+            }
+
+            var buffer = BeginValue(length, out var written);
+            buffer[0] = (byte)'"';
+            var position = 1;
+            var start = 0;
+            for (var i = firstEscape; i >= 0;)
+            {
+                position += Utf8.GetBytes(text.Slice(start, i - start), buffer.Slice(position));
+                position += WriteEscape(text[i], buffer.Slice(position));
+                start = i + 1;
+                var next = IndexOfStringSpecialCharacter(text.Slice(start));
+                i = next < 0 ? -1 : start + next;
+            }
+            position += Utf8.GetBytes(text.Slice(start), buffer.Slice(position));
+            buffer[position] = (byte)'"';
+            _writer.Advance(written);
         }
         catch (EncoderFallbackException exception)
         {
@@ -142,6 +168,22 @@ public struct SexprEmitter
 
     public void WriteSymbol(ReadOnlySpan<byte> value)
     {
+        ValidateSymbol(value);
+        WriteValueBytes(value);
+    }
+
+    public void WriteSymbol(EncodedSymbol value)
+    {
+        var bytes = value.Utf8Value;
+        if (bytes.IsEmpty)
+        {
+            throw SexprSerializerException.ForSerialization("Initialize the encoded symbol before writing.");
+        }
+        WriteValueBytes(bytes);
+    }
+
+    private static void ValidateSymbol(ReadOnlySpan<byte> value)
+    {
         try
         {
             Utf8.GetCharCount(value);
@@ -158,22 +200,64 @@ public struct SexprEmitter
         {
             throw SexprSerializerException.ForSerialization("A symbol cannot contain whitespace, control characters, parentheses, semicolons, or quotes.");
         }
-        BeginValue();
-        WriteBytes(value);
     }
 
     public void WriteNumber(int value)
     {
         Span<byte> bytes = stackalloc byte[32];
         Utf8Formatter.TryFormat(value, bytes, out var written);
-        WriteNumberBytes(bytes.Slice(0, written));
+        WriteValueBytes(bytes.Slice(0, written));
     }
 
     public void WriteNumber(long value)
     {
         Span<byte> bytes = stackalloc byte[32];
         Utf8Formatter.TryFormat(value, bytes, out var written);
-        WriteNumberBytes(bytes.Slice(0, written));
+        WriteValueBytes(bytes.Slice(0, written));
+    }
+
+    internal void WriteNumbers(ReadOnlySpan<int> values)
+    {
+        const int maxBytesPerValue = 12;
+        while (!values.IsEmpty)
+        {
+            var count = Math.Min(values.Length, IntegerBatchSize);
+            var buffer = BeginValue(count * maxBytesPerValue, out var reserved);
+            var position = 0;
+            for (var i = 0; i < count; i++)
+            {
+                if (i > 0)
+                {
+                    buffer[position++] = (byte)' ';
+                }
+                Utf8Formatter.TryFormat(values[i], buffer.Slice(position), out var written);
+                position += written;
+            }
+            _writer.Advance(reserved - buffer.Length + position);
+            values = values.Slice(count);
+        }
+    }
+
+    internal void WriteNumbers(ReadOnlySpan<long> values)
+    {
+        const int maxBytesPerValue = 21;
+        while (!values.IsEmpty)
+        {
+            var count = Math.Min(values.Length, IntegerBatchSize);
+            var buffer = BeginValue(count * maxBytesPerValue, out var reserved);
+            var position = 0;
+            for (var i = 0; i < count; i++)
+            {
+                if (i > 0)
+                {
+                    buffer[position++] = (byte)' ';
+                }
+                Utf8Formatter.TryFormat(values[i], buffer.Slice(position), out var written);
+                position += written;
+            }
+            _writer.Advance(reserved - buffer.Length + position);
+            values = values.Slice(count);
+        }
     }
 
     public void WriteNumber(float value)
@@ -184,7 +268,7 @@ public struct SexprEmitter
         }
         Span<byte> bytes = stackalloc byte[64];
         Utf8Formatter.TryFormat(value, bytes, out var written);
-        WriteNumberBytes(bytes.Slice(0, written));
+        WriteValueBytes(bytes.Slice(0, written));
     }
 
     public void WriteNumber(double value)
@@ -195,7 +279,7 @@ public struct SexprEmitter
         }
         Span<byte> bytes = stackalloc byte[64];
         Utf8Formatter.TryFormat(value, bytes, out var written);
-        WriteNumberBytes(bytes.Slice(0, written));
+        WriteValueBytes(bytes.Slice(0, written));
     }
 
     /// <summary>Checks that exactly one complete root value was emitted.</summary>
@@ -207,12 +291,13 @@ public struct SexprEmitter
         }
     }
 
-    private void BeginValue()
+    private Span<byte> BeginValue(int length, out int written)
     {
         if (_writer == null)
         {
             throw new InvalidOperationException("Initialize the emitter with an IBufferWriter<byte> before writing.");
         }
+        var separator = _depth > 0 && _needsSeparator;
         if (_depth == 0)
         {
             if (_hasRoot)
@@ -221,28 +306,93 @@ public struct SexprEmitter
             }
             _hasRoot = true;
         }
-        else if (_needsSeparator)
-        {
-            WriteByte((byte)' ');
-        }
         _needsSeparator = true;
-    }
-
-    private void WriteNumberBytes(ReadOnlySpan<byte> bytes)
-    {
-        BeginValue();
-        WriteBytes(bytes);
-    }
-
-    private void WriteText(ReadOnlySpan<char> text)
-    {
-        if (text.IsEmpty)
+        written = checked(length + (separator ? 1 : 0));
+        var buffer = _writer.GetSpan(written).Slice(0, written);
+        if (separator)
         {
-            return;
+            buffer[0] = (byte)' ';
+            return buffer.Slice(1);
         }
-        var length = Utf8.GetByteCount(text);
-        var written = Utf8.GetBytes(text, _writer.GetSpan(length));
+        return buffer;
+    }
+
+    private void WriteValueBytes(ReadOnlySpan<byte> bytes)
+    {
+        var buffer = BeginValue(bytes.Length, out var written);
+        bytes.CopyTo(buffer);
         _writer.Advance(written);
+    }
+
+    private bool TryWriteShortAsciiString(ReadOnlySpan<char> text)
+    {
+        foreach (var character in text)
+        {
+            if ((uint)(character - ' ') > '~' - ' ' || character is '"' or '\\')
+            {
+                return false;
+            }
+        }
+
+        var buffer = BeginValue(text.Length + 2, out var written);
+        buffer[0] = (byte)'"';
+        var content = buffer.Slice(1, text.Length);
+        for (var i = 0; i < text.Length; i++)
+        {
+            content[i] = (byte)text[i];
+        }
+        buffer[text.Length + 1] = (byte)'"';
+        _writer.Advance(written);
+        return true;
+    }
+
+    private bool TryWriteEscapedAsciiString(ReadOnlySpan<char> text)
+    {
+        var length = text.Length + 2;
+        foreach (var character in text)
+        {
+            if (character > 0x7f)
+            {
+                return false;
+            }
+            if (character < ' ' || character is '"' or '\\')
+            {
+                length += character is '"' or '\\' or '\b' or '\f' or '\n' or '\r' or '\t' ? 1 : 5;
+            }
+        }
+        var buffer = BeginValue(length, out var written);
+        buffer[0] = (byte)'"';
+        var position = 1;
+        foreach (var character in text)
+        {
+            if (character < ' ' || character is '"' or '\\')
+            {
+                position += WriteEscape(character, buffer.Slice(position));
+            }
+            else
+            {
+                buffer[position++] = (byte)character;
+            }
+        }
+        buffer[position] = (byte)'"';
+        _writer.Advance(written);
+        return true;
+    }
+
+    private static int IndexOfStringSpecialCharacter(ReadOnlySpan<char> text)
+    {
+#if NET8_0_OR_GREATER
+        return text.IndexOfAny(StringSpecialCharacters);
+#else
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] < ' ' || text[i] is '"' or '\\')
+            {
+                return i;
+            }
+        }
+        return -1;
+#endif
     }
 
 #if NET8_0_OR_GREATER
@@ -259,28 +409,35 @@ public struct SexprEmitter
     }
 #endif
 
-    private void WriteControlCharacter(char value)
+    private static int WriteEscape(char value, Span<byte> buffer)
     {
+        buffer[0] = (byte)'\\';
+        buffer[1] = value switch
+        {
+            '"' => (byte)'"',
+            '\\' => (byte)'\\',
+            '\b' => (byte)'b',
+            '\f' => (byte)'f',
+            '\n' => (byte)'n',
+            '\r' => (byte)'r',
+            '\t' => (byte)'t',
+            _ => (byte)'u'
+        };
+        if (buffer[1] != (byte)'u')
+        {
+            return 2;
+        }
         ReadOnlySpan<byte> hex = "0123456789abcdef"u8;
-        Span<byte> bytes = stackalloc byte[6];
-        bytes[0] = (byte)'\\';
-        bytes[1] = (byte)'u';
-        bytes[2] = (byte)'0';
-        bytes[3] = (byte)'0';
-        bytes[4] = hex[value >> 4];
-        bytes[5] = hex[value & 15];
-        WriteBytes(bytes);
+        buffer[2] = (byte)'0';
+        buffer[3] = (byte)'0';
+        buffer[4] = hex[value >> 4];
+        buffer[5] = hex[value & 15];
+        return 6;
     }
 
     private void WriteByte(byte value)
     {
         _writer.GetSpan(1)[0] = value;
         _writer.Advance(1);
-    }
-
-    private void WriteBytes(ReadOnlySpan<byte> bytes)
-    {
-        bytes.CopyTo(_writer.GetSpan(bytes.Length));
-        _writer.Advance(bytes.Length);
     }
 }

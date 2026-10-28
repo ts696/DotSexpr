@@ -7,6 +7,27 @@ namespace DotSexpr.Tests;
 public partial class FormatterTests
 {
     [SexprObject]
+    public partial class KeyGroups
+    {
+        public int Value { get; set; }
+        public int Other { get; set; }
+        [SexprTag("名前")]
+        public int Name { get; set; }
+        public int Number { get; set; }
+    }
+
+    [Test]
+    public void Deserialize_EqualLengthKeys_PreserveExactMatchingAndInputOrder()
+    {
+        var result = SexprSerializer.Deserialize<KeyGroups>(
+            "(:Other 2 :Value 1 :名前 3 :Number 4 :Other 5 :Unknow 9 :Vxlue 7)");
+        Assert.That(result.Value, Is.EqualTo(1));
+        Assert.That(result.Other, Is.EqualTo(5));
+        Assert.That(result.Name, Is.EqualTo(3));
+        Assert.That(result.Number, Is.EqualTo(4));
+    }
+
+    [SexprObject]
     public partial class Tagged
     {
         [SexprTag("full-name")]
@@ -274,6 +295,8 @@ public partial class FormatterTests
         var options = new SexprSerializerOptions { Resolver = new CustomResolver() };
         Assert.That(SexprSerializer.Deserialize<Tagged>("(:event 1)", options).@event, Is.EqualTo(101));
         Assert.That(SexprSerializer.Deserialize<int[]>("(1 2)", options), Is.EqualTo(new[] { 101, 102 }));
+        Assert.That(SexprSerializer.Deserialize<SerializeTests.TaggedNames>("(:full-name (a b))", options).Names,
+            Is.EqualTo(new[] { "custom" }));
         var call = (CallExpression)SexprSerializer.Deserialize<Expression>("(f x)", options);
         Assert.That(call.Arguments[0], Is.EqualTo(new SymbolExpression("custom")));
     }
@@ -282,6 +305,10 @@ public partial class FormatterTests
     {
         public ISexprFormatter<T>? GetFormatter<T>()
         {
+            if (typeof(T) == typeof(string[]))
+            {
+                return (ISexprFormatter<T>)(object)new CustomStringArrayFormatter();
+            }
             if (typeof(T) == typeof(Manual))
             {
                 return (ISexprFormatter<T>)(object)new ManualFormatter();
@@ -296,6 +323,13 @@ public partial class FormatterTests
             }
             return DotSexpr.Serializer.Resolvers.DefaultResolver.Instance.GetFormatter<T>();
         }
+    }
+
+    private sealed class CustomStringArrayFormatter : ISexprFormatter<string[]>
+    {
+        public string[] Deserialize(in SNode node, SexprSerializerOptions options) => new[] { "custom" };
+        public void Serialize(ref SexprEmitter emitter, string[] value, SexprSerializerOptions options) =>
+            throw new NotImplementedException();
     }
 
     private sealed class CustomIntFormatter : ISexprFormatter<int>

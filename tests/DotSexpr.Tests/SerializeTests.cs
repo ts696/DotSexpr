@@ -133,12 +133,26 @@ public partial class SerializeTests
     [TestCase("a b;()#|comment|#")]
     [TestCase("quote\" and slash\\")]
     [TestCase("東京😀")]
+    [TestCase("a\"東京😀")]
     public void Serialize_String_QuotesEscapesAndRoundTrips(string value)
     {
         var text = SexprSerializer.Serialize(value);
         using var document = SDocument.Parse(text);
         Assert.That(document.RootNode.Token.IsString, Is.True);
         Assert.That(SexprSerializer.Deserialize<string>(text), Is.EqualTo(value));
+    }
+
+    [TestCase(64)]
+    [TestCase(65)]
+    public void Serialize_EscapedAsciiString_ProducesExactOutput(int length)
+    {
+        var prefix = new string('a', length - 2);
+        var value = prefix + "\"\n";
+        var expected = "\"" + prefix + "\\\"\\n\"";
+        var writer = new ArrayBufferWriter<byte>();
+        SexprSerializer.Serialize(writer, value);
+        Assert.That(SexprSerializer.Serialize(value), Is.EqualTo(expected));
+        Assert.That(Encoding.UTF8.GetString(writer.WrittenSpan), Is.EqualTo(expected));
     }
 
     [Test]
@@ -151,14 +165,27 @@ public partial class SerializeTests
         Assert.That(SexprSerializer.Deserialize<string>(text), Is.EqualTo(value));
     }
 
-    [Test]
-    public void Serialize_Utf8AndBufferWriter_ProduceSameOutputAsString()
+    [TestCase(16)]
+    [TestCase(4096)]
+    public void Serialize_Utf8AndBufferWriter_ProduceSameOutputAsString(int length)
     {
-        var value = new Person { Name = "東京😀", Age = 3 };
+        var value = new Person { Name = new string('a', length) + "東京😀", Age = 3 };
         var writer = new ArrayBufferWriter<byte>();
         SexprSerializer.Serialize(writer, value);
         Assert.That(writer.WrittenSpan.ToArray(), Is.EqualTo(SexprSerializer.SerializeToUtf8Bytes(value)));
         Assert.That(Encoding.UTF8.GetString(writer.WrittenSpan), Is.EqualTo(SexprSerializer.Serialize(value)));
+    }
+
+    [Test]
+    public void Serialize_Utf8Result_RemainsValidAfterAnotherSerialization()
+    {
+        var value = new string('a', 4096) + "東京😀";
+        var bytes = SexprSerializer.SerializeToUtf8Bytes(value);
+
+        SexprSerializer.SerializeToUtf8Bytes(new string('b', 6000));
+
+        using var document = SDocument.Parse(bytes);
+        Assert.That(document.RootNode.GetString(), Is.EqualTo(value));
     }
 
     [Test]
@@ -189,10 +216,11 @@ public partial class SerializeTests
         Assert.That(Assert.Throws<SexprSerializerException>(() => SexprSerializer.Serialize<string>(null!))!.Path, Is.EqualTo("$"));
     }
 
-    [Test]
-    public void Serialize_InvalidUtf16_PreservesCauseAndPath()
+    [TestCase("")]
+    [TestCase("\"")]
+    public void Serialize_InvalidUtf16_PreservesCauseAndPath(string prefix)
     {
-        var value = new Person { Name = new string((char)0xd800, 1) };
+        var value = new Person { Name = prefix + new string((char)0xd800, 1) };
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Serialize(value))!;
         Assert.That(error.Path, Is.EqualTo("$.Name"));
         Assert.That(error.InnerException, Is.TypeOf<EncoderFallbackException>());
@@ -237,6 +265,8 @@ public partial class SerializeTests
         var options = new SexprSerializerOptions { Resolver = new CustomResolver() };
         Assert.That(SexprSerializer.Serialize(new Person { Name = "a", Age = 2 }, options), Is.EqualTo("(:Name \"a\" :Age 102)"));
         Assert.That(SexprSerializer.Serialize(new[] { 1, 2 }, options), Is.EqualTo("(101 102)"));
+        Assert.That(SexprSerializer.Serialize(new TaggedNames { Names = ["a", "b"] }, options),
+            Is.EqualTo("(:full-name (\"custom\"))"));
         var expression = SexprSerializer.Deserialize<Expression>("(f x (g y))");
         Assert.That(SexprSerializer.Serialize(expression, options), Is.EqualTo("(f custom-x (g custom-y))"));
     }
@@ -245,6 +275,10 @@ public partial class SerializeTests
     {
         public ISexprFormatter<T>? GetFormatter<T>()
         {
+            if (typeof(T) == typeof(string[]))
+            {
+                return (ISexprFormatter<T>)(object)new CustomStringArrayFormatter();
+            }
             if (typeof(T) == typeof(int))
             {
                 return (ISexprFormatter<T>)(object)new CustomIntFormatter();
@@ -255,6 +289,18 @@ public partial class SerializeTests
             }
             return DotSexpr.Serializer.Resolvers.DefaultResolver.Instance.GetFormatter<T>();
         }
+    }
+
+    private sealed class CustomStringArrayFormatter : ISexprFormatter<string[]>
+    {
+        public void Serialize(ref SexprEmitter emitter, string[] value, SexprSerializerOptions options)
+        {
+            emitter.BeginList();
+            emitter.WriteString("custom");
+            emitter.EndList();
+        }
+
+        public string[] Deserialize(in SNode node, SexprSerializerOptions options) => throw new NotImplementedException();
     }
 
     private sealed class CustomIntFormatter : ISexprFormatter<int>

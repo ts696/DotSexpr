@@ -16,9 +16,12 @@ internal static class SymbolSyntax
 #if NET8_0_OR_GREATER
         return value.IndexOfAny(InvalidCharacters);
 #else
+        const ulong invalidCharacters = ((1UL << (' ' + 1)) - 1)
+            | (1UL << '"') | (1UL << '(') | (1UL << ')') | (1UL << ';');
         for (var i = 0; i < value.Length; i++)
         {
-            if (value[i] <= (byte)' ' || value[i] is (byte)'(' or (byte)')' or (byte)';' or (byte)'"')
+            var character = value[i];
+            if (character <= ';' && ((1UL << character) & invalidCharacters) != 0)
             {
                 return i;
             }
