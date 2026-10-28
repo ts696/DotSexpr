@@ -1,4 +1,5 @@
 using DotSexpr.Emitter;
+using DotSexpr.Serializer.Resolvers;
 
 namespace DotSexpr.Serializer.Formatters;
 
@@ -64,5 +65,39 @@ public class ArrayFormatter<T> : ISexprFormatter<T[]>
             throw;
         }
         return values;
+    }
+}
+
+internal sealed class StringArrayFormatter : ArrayFormatter<string>, ISexprFormatter<string[]>
+{
+    public new void Serialize(ref SexprEmitter emitter, string[] value, SexprSerializerOptions options)
+    {
+        if (!ReferenceEquals(options.Resolver, DefaultResolver.Instance))
+        {
+            base.Serialize(ref emitter, value, options);
+            return;
+        }
+        emitter.BeginList();
+        for (var index = 0; index < value.Length; index++)
+        {
+            try
+            {
+                var item = value[index];
+                if (item is null)
+                {
+                    SexprSerializer.SerializeResolved<string>(ref emitter, item!, options, null);
+                }
+                else
+                {
+                    emitter.WriteString(item);
+                }
+            }
+            catch (SexprSerializerException exception)
+            {
+                exception.PrependIndex(index);
+                throw;
+            }
+        }
+        emitter.EndList();
     }
 }
