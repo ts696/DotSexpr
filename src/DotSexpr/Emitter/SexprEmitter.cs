@@ -102,34 +102,40 @@ public struct SexprEmitter
             {
                 return;
             }
-            var length = checked(Utf8.GetByteCount(text) + 2);
-            for (var i = firstEscape; i >= 0;)
-            {
-                length = checked(length + (text[i] is '"' or '\\' or '\b' or '\f' or '\n' or '\r' or '\t' ? 1 : 5));
-                var next = IndexOfStringSpecialCharacter(text.Slice(i + 1));
-                i = next < 0 ? -1 : i + 1 + next;
-            }
-
-            var buffer = BeginValue(length, out var written);
-            buffer[0] = (byte)'"';
-            var position = 1;
-            var start = 0;
-            for (var i = firstEscape; i >= 0;)
-            {
-                position += Utf8.GetBytes(text.Slice(start, i - start), buffer.Slice(position));
-                position += WriteEscape(text[i], buffer.Slice(position));
-                start = i + 1;
-                var next = IndexOfStringSpecialCharacter(text.Slice(start));
-                i = next < 0 ? -1 : start + next;
-            }
-            position += Utf8.GetBytes(text.Slice(start), buffer.Slice(position));
-            buffer[position] = (byte)'"';
-            _writer.Advance(written);
+            WriteStringUtf8(text, firstEscape);
         }
         catch (EncoderFallbackException exception)
         {
             throw SexprSerializerException.ForSerialization("The string contains invalid UTF-16.", exception);
         }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void WriteStringUtf8(ReadOnlySpan<char> text, int firstEscape)
+    {
+        var length = checked(Utf8.GetByteCount(text) + 2);
+        for (var i = firstEscape; i >= 0;)
+        {
+            length = checked(length + (text[i] is '"' or '\\' or '\b' or '\f' or '\n' or '\r' or '\t' ? 1 : 5));
+            var next = IndexOfStringSpecialCharacter(text.Slice(i + 1));
+            i = next < 0 ? -1 : i + 1 + next;
+        }
+
+        var buffer = BeginValue(length, out var written);
+        buffer[0] = (byte)'"';
+        var position = 1;
+        var start = 0;
+        for (var i = firstEscape; i >= 0;)
+        {
+            position += Utf8.GetBytes(text.Slice(start, i - start), buffer.Slice(position));
+            position += WriteEscape(text[i], buffer.Slice(position));
+            start = i + 1;
+            var next = IndexOfStringSpecialCharacter(text.Slice(start));
+            i = next < 0 ? -1 : start + next;
+        }
+        position += Utf8.GetBytes(text.Slice(start), buffer.Slice(position));
+        buffer[position] = (byte)'"';
+        _writer.Advance(written);
     }
 
     public void WriteSymbol(string value)
