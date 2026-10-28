@@ -537,6 +537,17 @@ public class SDocument : IDisposable
 
                     var elemSpan = bytes.Slice(bufferIndex, elemLength);
                     var kind = IsNumber(elemSpan) ? STokenKind.Number : STokenKind.Symbol;
+                    if (validateUtf8 && kind == STokenKind.Symbol)
+                    {
+                        try
+                        {
+                            StrictUtf8.GetCharCount(elemSpan);
+                        }
+                        catch (DecoderFallbackException)
+                        {
+                            throw new SexprParserException("Invalid UTF-8 in symbol.", bytes, bufferIndex);
+                        }
+                    }
                     MakeToken(kind, elementId, bufferIndex, length: elemLength);
                     bufferIndex += elemLength - 1;
                     elementId++;
