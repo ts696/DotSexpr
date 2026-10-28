@@ -661,7 +661,18 @@ public class SDocument : IDisposable
 #if NET8_0_OR_GREATER
         var idx = bytes.IndexOfAny(SymbolDelimiters);
 #else
-        var idx = bytes.IndexOfAny(" \n\r\t();"u8);
+        const ulong delimiters = (1UL << '\t') | (1UL << '\n') | (1UL << '\r') | (1UL << ' ')
+            | (1UL << '(') | (1UL << ')') | (1UL << ';');
+        var idx = 0;
+        while (idx < bytes.Length)
+        {
+            var value = bytes[idx];
+            if (value <= ';' && ((1UL << value) & delimiters) != 0)
+            {
+                break;
+            }
+            idx++;
+        }
 #endif
         return idx >= 0 ? idx : bytes.Length;
     }
