@@ -177,6 +177,11 @@ public class SDocument : IDisposable
         }
 
         var bytes = _bytes.Slice(token.Offset, token.Length).Span;
+        if (Utf8Parser.TryParse(bytes, out int value, out var bytesConsumed) && bytesConsumed == bytes.Length)
+        {
+            return value;
+        }
+
 #if NET8_0_OR_GREATER
         return int.Parse(bytes, NumberStyles.Float, CultureInfo.InvariantCulture);
 #else
@@ -193,6 +198,11 @@ public class SDocument : IDisposable
         }
 
         var bytes = _bytes.Slice(token.Offset, token.Length).Span;
+        if (Utf8Parser.TryParse(bytes, out long value, out var bytesConsumed) && bytesConsumed == bytes.Length)
+        {
+            return value;
+        }
+
 #if NET8_0_OR_GREATER
         return long.Parse(bytes, NumberStyles.Float, CultureInfo.InvariantCulture);
 #else
@@ -481,8 +491,9 @@ public class SDocument : IDisposable
                         throw new SexprParserException("Unexpected ')': no matching '(' was found.", bytes, bufferIndex);
                     }
 
-                    SetLength(listStack[listId], bufferIndex - GetToken(listStack[listId]).Offset + 1);
-                    SetEndIndex(listStack[listId], elementId);
+                    ref var list = ref _tokens[listStack[listId]];
+                    list.Length = bufferIndex - list.Offset + 1;
+                    list.EndIndex = elementId;
                     listId--;
                 }
                 else if (c == '\n' || c == '\r' || c == '\t' || c == ' ')
@@ -507,8 +518,7 @@ public class SDocument : IDisposable
                     }
 
                     var stringKind = hasEscape ? StringKind.Escaped : StringKind.Plane;
-                    MakeToken(STokenKind.String, elementId, bufferIndex, (int)stringKind);
-                    SetLength(elementId, strLength);
+                    MakeToken(STokenKind.String, elementId, bufferIndex, (int)stringKind, strLength);
                     bufferIndex += strLength - 1;
                     elementId++;
 
@@ -538,8 +548,7 @@ public class SDocument : IDisposable
                             throw new SexprParserException("Invalid UTF-8 in symbol.", bytes, bufferIndex);
                         }
                     }
-                    MakeToken(kind, elementId, bufferIndex);
-                    SetLength(elementId, elemLength);
+                    MakeToken(kind, elementId, bufferIndex, length: elemLength);
                     bufferIndex += elemLength - 1;
                     elementId++;
 
@@ -573,9 +582,10 @@ public class SDocument : IDisposable
 
             if (allowMultipleDocuments)
             {
-                SetCount(RootId, topLevel);
-                SetLength(RootId, bytes.Length);
-                SetEndIndex(RootId, elementId);
+                ref var root = ref _tokens[RootId];
+                root.Count = topLevel;
+                root.Length = bytes.Length;
+                root.EndIndex = elementId;
             }
         }
         finally
@@ -662,7 +672,18 @@ public class SDocument : IDisposable
 #if NET8_0_OR_GREATER
         var idx = bytes.IndexOfAny(SymbolDelimiters);
 #else
-        var idx = bytes.IndexOfAny(" \n\r\t();"u8);
+        const ulong delimiters = (1UL << '\t') | (1UL << '\n') | (1UL << '\r') | (1UL << ' ')
+            | (1UL << '(') | (1UL << ')') | (1UL << ';');
+        var idx = 0;
+        while (idx < bytes.Length)
+        {
+            var value = bytes[idx];
+            if (value <= ';' && ((1UL << value) & delimiters) != 0)
+            {
+                break;
+            }
+            idx++;
+        }
 #endif
         return idx >= 0 ? idx : bytes.Length;
     }
@@ -750,10 +771,8 @@ public class SDocument : IDisposable
         return -1;
     }
 
-    private void MakeToken(STokenKind kind, int id, int offset, int subKind = 0)
+    private void MakeToken(STokenKind kind, int id, int offset, int subKind = 0, int length = 0)
     {
-        var token = new SToken(kind, subKind, offset);
-
         if (_tokens.Length <= id)
         {
             var newBuffer = ArrayPool<SToken>.Shared.Rent(_tokens.Length * 2);
@@ -762,7 +781,7 @@ public class SDocument : IDisposable
             _tokens = newBuffer;
         }
 
-        _tokens[id] = token;
+        _tokens[id] = new SToken(kind, subKind, offset) { Length = length };
     }
 
 #if NET8_0_OR_GREATER
@@ -877,24 +896,8 @@ public class SDocument : IDisposable
 
     private void IncrementCount(int id)
     {
-        ThrowIfDisposed();
         ref var token = ref _tokens[id];
-        token.Count++;
-    }
-
-    private void SetLength(int id, int length)
-    {
-        _tokens[id].Length = length;
-    }
-
-    private void SetCount(int id, int count)
-    {
-        _tokens[id].Count = count;
-    }
-
-    private void SetEndIndex(int id, int endIndex)
-    {
-        _tokens[id].EndIndex = endIndex;
+        token.IncrementCount();
     }
 
     public void Dispose()

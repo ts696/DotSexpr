@@ -7,6 +7,34 @@ namespace DotSexpr.Tests;
 
 public partial class EmitterTests
 {
+    [Test]
+    public void Serialize_RetainedEmitter_RejectsReleasedOutputBuffer()
+    {
+        var formatter = new CapturingFormatter();
+        var options = new SexprSerializerOptions { Resolver = formatter };
+        Assert.That(SexprSerializer.Serialize(formatter, options), Is.EqualTo("()"));
+
+        Assert.That(() => formatter.Captured.WriteNumber(1), Throws.TypeOf<ObjectDisposedException>());
+    }
+
+    private sealed class CapturingFormatter : ISexprFormatterResolver, ISexprFormatter<CapturingFormatter>
+    {
+        internal SexprEmitter Captured;
+
+        public ISexprFormatter<T>? GetFormatter<T>() => typeof(T) == typeof(CapturingFormatter)
+            ? (ISexprFormatter<T>)(object)this : null;
+
+        public void Serialize(ref SexprEmitter emitter, CapturingFormatter value, SexprSerializerOptions options)
+        {
+            emitter.BeginList();
+            Captured = emitter;
+            emitter.EndList();
+        }
+
+        public CapturingFormatter Deserialize(in SNode node, SexprSerializerOptions options) =>
+            throw new NotSupportedException();
+    }
+
     [TestCase(0)]
     [TestCase(1)]
     [TestCase(15)]
@@ -47,6 +75,15 @@ public partial class EmitterTests
         Assert.That(SexprSerializer.Serialize(value), Is.EqualTo("\"" + value + "\""));
     }
 
+    [TestCase(" !#()[]{};|~")]
+    [TestCase("abcd日本")]
+    [TestCase("abcd\u007f")]
+    public void WriteString_ShortMixedCharacters_RoundTrips(string value)
+    {
+        var text = SexprSerializer.Serialize(value);
+        Assert.That(SexprSerializer.Deserialize<string>(text), Is.EqualTo(value));
+    }
+
     [Test]
     public void Write_NestedListsAndAtoms_SeparatesValuesWithoutExtraSpaces()
     {
@@ -62,6 +99,41 @@ public partial class EmitterTests
         emitter.Complete();
 
         Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(f () \"a\\nb\" 10)"));
+    }
+
+    [Test]
+    public void Write_Values_AreVisibleBeforeComplete()
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        var emitter = new SexprEmitter(buffer);
+        emitter.BeginList();
+        emitter.WriteSymbol("f");
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(f"));
+
+        emitter.WriteString("東京😀\n\"\\");
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(f \"東京😀\\n\\\"\\\\\""));
+
+        emitter.WriteNumber(-12);
+        emitter.EndList();
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(f \"東京😀\\n\\\"\\\\\" -12)"));
+        emitter.Complete();
+    }
+
+    [Test]
+    public void WriteString_InvalidUtf16_DoesNotAppendSeparator()
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        var emitter = new SexprEmitter(buffer);
+        emitter.BeginList();
+        emitter.WriteSymbol("f");
+
+        Assert.Throws<SexprSerializerException>(() => emitter.WriteString("bad\ud800"));
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(f"));
+
+        emitter.WriteString("ok");
+        emitter.EndList();
+        emitter.Complete();
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo("(f \"ok\")"));
     }
 
     [Test]
@@ -84,6 +156,45 @@ public partial class EmitterTests
         var error = Assert.Throws<SexprSerializerException>(() => emitter.WriteSymbol(new byte[] { 0xff }))!;
         Assert.That(error.InnerException, Is.TypeOf<DecoderFallbackException>());
         Assert.That(buffer.WrittenCount, Is.Zero);
+    }
+
+    [TestCase(":Name")]
+    [TestCase(":名前😀")]
+    public void WriteSymbol_EncodedSymbol_CanBeReused(string name)
+    {
+        var symbol = SexprEmitter.EncodedSymbol.Encode(name);
+        var buffer = new ArrayBufferWriter<byte>();
+        var emitter = new SexprEmitter(buffer);
+        emitter.BeginList();
+        emitter.WriteSymbol(symbol);
+        emitter.WriteNumber(1);
+        emitter.WriteSymbol(symbol);
+        emitter.WriteString("value");
+        emitter.EndList();
+        emitter.Complete();
+
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo($"({name} 1 {name} \"value\")"));
+    }
+
+    [Test]
+    public void EncodedSymbol_InvalidValues_AreRejected()
+    {
+        foreach (var value in new[] { "", "123", "bad key", "bad\0key", "bad\ud800" })
+        {
+            Assert.Throws<SexprSerializerException>(() => SexprEmitter.EncodedSymbol.Encode(value));
+        }
+    }
+
+    [Test]
+    public void WriteSymbol_DefaultEncodedSymbol_IsRejectedBeforeOutput()
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        var emitter = new SexprEmitter(buffer);
+        Assert.Throws<SexprSerializerException>(() => emitter.WriteSymbol(default(SexprEmitter.EncodedSymbol)));
+        Assert.That(buffer.WrittenCount, Is.Zero);
+        emitter.WriteSymbol(SexprEmitter.EncodedSymbol.Encode(":Name"));
+        emitter.Complete();
+        Assert.That(Encoding.UTF8.GetString(buffer.WrittenSpan), Is.EqualTo(":Name"));
     }
 
     [Test]

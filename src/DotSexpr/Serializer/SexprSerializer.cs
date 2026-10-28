@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Text;
 using DotSexpr.Emitter;
 
@@ -9,14 +10,14 @@ public static class SexprSerializer
 {
     public static string Serialize<T>(T value, SexprSerializerOptions? options = null)
     {
-        var buffer = new ArrayBufferWriter<byte>();
+        using var buffer = new PooledBufferWriter();
         Serialize(buffer, value, options);
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
     public static byte[] SerializeToUtf8Bytes<T>(T value, SexprSerializerOptions? options = null)
     {
-        var buffer = new ArrayBufferWriter<byte>();
+        using var buffer = new PooledBufferWriter();
         Serialize(buffer, value, options);
         return buffer.WrittenSpan.ToArray();
     }
@@ -37,6 +38,16 @@ public static class SexprSerializer
             throw SexprSerializerException.ForSerialization("Null values cannot be represented as an S-expression.");
         }
         var formatter = options.Resolver.GetFormatter<T>();
+        SerializeResolved(ref emitter, value, options, formatter);
+    }
+
+    internal static void SerializeResolved<T>(ref SexprEmitter emitter, T value,
+        SexprSerializerOptions options, ISexprFormatter<T>? formatter)
+    {
+        if (value is null)
+        {
+            throw SexprSerializerException.ForSerialization("Null values cannot be represented as an S-expression.");
+        }
         if (formatter == null)
         {
             throw SexprSerializerException.ForSerialization(MissingFormatter<T>());
@@ -56,6 +67,27 @@ public static class SexprSerializer
         try
         {
             Serialize(ref emitter, value, options);
+        }
+        catch (SexprSerializerException exception)
+        {
+            exception.PrependProperty(name);
+            throw;
+        }
+    }
+
+    public static void SerializeProperty<T>(ref SexprEmitter emitter, T value, SexprSerializerOptions options,
+        string name, ISexprFormatter<T>? formatter)
+    {
+        try
+        {
+            if (formatter == null)
+            {
+                Serialize(ref emitter, value, options);
+            }
+            else
+            {
+                SerializeResolved(ref emitter, value, options, formatter);
+            }
         }
         catch (SexprSerializerException exception)
         {
@@ -109,6 +141,12 @@ public static class SexprSerializer
     {
         options ??= SexprSerializerOptions.Default;
         var formatter = options.Resolver.GetFormatter<T>();
+        return DeserializeResolved(in node, options, formatter);
+    }
+
+    internal static T DeserializeResolved<T>(in SNode node, SexprSerializerOptions options,
+        ISexprFormatter<T>? formatter)
+    {
         if (formatter == null)
         {
             throw new SexprSerializerException(MissingFormatter<T>(), node);
@@ -129,6 +167,77 @@ public static class SexprSerializer
         {
             exception.PrependProperty(name);
             throw;
+        }
+    }
+
+    public static T DeserializeProperty<T>(in SNode node, SexprSerializerOptions options, string name,
+        ISexprFormatter<T>? formatter)
+    {
+        try
+        {
+            return formatter == null ? Deserialize<T>(in node, options)
+                : DeserializeResolved(in node, options, formatter);
+        }
+        catch (SexprSerializerException exception)
+        {
+            exception.PrependProperty(name);
+            throw;
+        }
+    }
+
+    private sealed class PooledBufferWriter : IBufferWriter<byte>, IDisposable
+    {
+        private byte[]? _buffer = ArrayPool<byte>.Shared.Rent(256);
+        private int _written;
+
+        public ReadOnlySpan<byte> WrittenSpan =>
+            (_buffer ?? throw new ObjectDisposedException(nameof(PooledBufferWriter))).AsSpan(0, _written);
+
+        public void Advance(int count)
+        {
+            _written += count;
+        }
+
+        public Memory<byte> GetMemory(int sizeHint = 0) => GetBuffer(sizeHint).AsMemory(_written);
+
+        public Span<byte> GetSpan(int sizeHint = 0) => GetBuffer(sizeHint).AsSpan(_written);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private byte[] GetBuffer(int sizeHint)
+        {
+            var buffer = _buffer ?? throw new ObjectDisposedException(nameof(PooledBufferWriter));
+            if (sizeHint < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(sizeHint));
+            }
+            var required = checked(_written + Math.Max(sizeHint, 1));
+            if (required <= buffer.Length)
+            {
+                return buffer;
+            }
+            return GrowBuffer(buffer, required);
+        }
+
+        private byte[] GrowBuffer(byte[] buffer, int required)
+        {
+            var capacity = (int)Math.Min(Math.Max((long)buffer.Length * 2, required), int.MaxValue);
+            var replacement = ArrayPool<byte>.Shared.Rent(capacity);
+            buffer.AsSpan(0, _written).CopyTo(replacement);
+            _buffer = replacement;
+            ArrayPool<byte>.Shared.Return(buffer);
+            return replacement;
+        }
+
+        public void Dispose()
+        {
+            var buffer = _buffer;
+            if (buffer == null)
+            {
+                return;
+            }
+            _buffer = null;
+            _written = 0;
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 }

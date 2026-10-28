@@ -1,4 +1,5 @@
 using DotSexpr.Emitter;
+using DotSexpr.Serializer.Resolvers;
 
 namespace DotSexpr.Serializer.Formatters;
 
@@ -7,11 +8,26 @@ public class ArrayFormatter<T> : ISexprFormatter<T[]>
     public void Serialize(ref SexprEmitter emitter, T[] value, SexprSerializerOptions options)
     {
         emitter.BeginList();
+        ISexprFormatter<T>? formatter = null;
         for (var i = 0; i < value.Length; i++)
         {
             try
             {
-                SexprSerializer.Serialize(ref emitter, value[i], options);
+                if (i == 0 && value[i] is not null)
+                {
+                    formatter = options.Resolver.GetFormatter<T>();
+                    if (typeof(T) == typeof(int) && formatter?.GetType() == typeof(Int32Formatter))
+                    {
+                        emitter.WriteNumbers((int[])(object)value);
+                        break;
+                    }
+                    if (typeof(T) == typeof(long) && formatter?.GetType() == typeof(Int64Formatter))
+                    {
+                        emitter.WriteNumbers((long[])(object)value);
+                        break;
+                    }
+                }
+                SexprSerializer.SerializeResolved(ref emitter, value[i], options, formatter);
             }
             catch (SexprSerializerException exception)
             {
@@ -29,12 +45,17 @@ public class ArrayFormatter<T> : ISexprFormatter<T[]>
             throw new SexprSerializerException("An array value must be a list.", node);
         }
         var values = new T[node.Count];
+        ISexprFormatter<T>? formatter = null;
         var index = 0;
         try
         {
             foreach (var child in node)
             {
-                values[index] = SexprSerializer.Deserialize<T>(in child, options);
+                if (index == 0)
+                {
+                    formatter = options.Resolver.GetFormatter<T>();
+                }
+                values[index] = SexprSerializer.DeserializeResolved(in child, options, formatter);
                 index++;
             }
         }
@@ -44,5 +65,39 @@ public class ArrayFormatter<T> : ISexprFormatter<T[]>
             throw;
         }
         return values;
+    }
+}
+
+internal sealed class StringArrayFormatter : ArrayFormatter<string>, ISexprFormatter<string[]>
+{
+    public new void Serialize(ref SexprEmitter emitter, string[] value, SexprSerializerOptions options)
+    {
+        if (!ReferenceEquals(options.Resolver, DefaultResolver.Instance))
+        {
+            base.Serialize(ref emitter, value, options);
+            return;
+        }
+        emitter.BeginList();
+        for (var index = 0; index < value.Length; index++)
+        {
+            try
+            {
+                var item = value[index];
+                if (item is null)
+                {
+                    SexprSerializer.SerializeResolved<string>(ref emitter, item!, options, null);
+                }
+                else
+                {
+                    emitter.WriteString(item);
+                }
+            }
+            catch (SexprSerializerException exception)
+            {
+                exception.PrependIndex(index);
+                throw;
+            }
+        }
+        emitter.EndList();
     }
 }
