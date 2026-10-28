@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 
 namespace DotSexpr;
 
@@ -63,6 +63,8 @@ public record struct SToken
         get => _endIndex;
         set => _endIndex = value;
     }
+
+    internal void IncrementCount() => _count++;
 
     internal SToken(STokenKind kind, int subKind, int offset)
     {

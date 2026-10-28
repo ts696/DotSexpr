@@ -9,11 +9,46 @@ namespace DotSexpr.SourceGenerator.Tests;
 
 public class GeneratorTests
 {
+    [Test]
+    public void Generate_BuiltinMembers_CompileWithCSharp9()
+    {
+        var result = Generate("""
+            [SexprObject] public partial class Model
+            {
+                public int Id { get; set; }
+                public long Count { get; set; }
+                public float Weight { get; set; }
+                public double Value { get; set; }
+                public string? Name { get; set; }
+                public string?[]? Tags { get; set; }
+                public int[] Samples { get; set; } = System.Array.Empty<int>();
+            }
+            """, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(result.GeneratorDiagnostics, Is.Empty);
+        Assert.That(result.CompilerErrors, Is.Empty);
+    }
+
     private static readonly MetadataReference[] References =
         ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
         .Select(path => MetadataReference.CreateFromFile(path))
         .Append(MetadataReference.CreateFromFile(typeof(SexprObjectAttribute).Assembly.Location))
         .ToArray();
+
+    [Test]
+    public void Generate_ObjectWithEqualLengthAndUnicodeKeys_CompilesWithCSharp9()
+    {
+        var result = Generate("""
+            [SexprObject] public partial class Model
+            {
+                public int Value { get; set; }
+                public int Other { get; set; }
+                [SexprTag("名前")] public int Name { get; set; }
+                public int Number { get; set; }
+            }
+            """, language: LanguageVersion.CSharp9, warningsAsErrors: true);
+        Assert.That(result.GeneratorDiagnostics, Is.Empty);
+        Assert.That(result.CompilerErrors, Is.Empty);
+    }
 
     [TestCase(false)]
     [TestCase(true)]

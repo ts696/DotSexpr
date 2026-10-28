@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Text;
 using DotSexpr.Emitter;
 
@@ -66,6 +67,27 @@ public static class SexprSerializer
         try
         {
             Serialize(ref emitter, value, options);
+        }
+        catch (SexprSerializerException exception)
+        {
+            exception.PrependProperty(name);
+            throw;
+        }
+    }
+
+    public static void SerializeProperty<T>(ref SexprEmitter emitter, T value, SexprSerializerOptions options,
+        string name, ISexprFormatter<T>? formatter)
+    {
+        try
+        {
+            if (formatter == null)
+            {
+                Serialize(ref emitter, value, options);
+            }
+            else
+            {
+                SerializeResolved(ref emitter, value, options, formatter);
+            }
         }
         catch (SexprSerializerException exception)
         {
@@ -148,6 +170,21 @@ public static class SexprSerializer
         }
     }
 
+    public static T DeserializeProperty<T>(in SNode node, SexprSerializerOptions options, string name,
+        ISexprFormatter<T>? formatter)
+    {
+        try
+        {
+            return formatter == null ? Deserialize<T>(in node, options)
+                : DeserializeResolved(in node, options, formatter);
+        }
+        catch (SexprSerializerException exception)
+        {
+            exception.PrependProperty(name);
+            throw;
+        }
+    }
+
     private sealed class PooledBufferWriter : IBufferWriter<byte>, IDisposable
     {
         private byte[]? _buffer = ArrayPool<byte>.Shared.Rent(256);
@@ -158,11 +195,6 @@ public static class SexprSerializer
 
         public void Advance(int count)
         {
-            var buffer = _buffer ?? throw new ObjectDisposedException(nameof(PooledBufferWriter));
-            if ((uint)count > (uint)(buffer.Length - _written))
-            {
-                throw new ArgumentOutOfRangeException(nameof(count));
-            }
             _written += count;
         }
 
@@ -170,6 +202,7 @@ public static class SexprSerializer
 
         public Span<byte> GetSpan(int sizeHint = 0) => GetBuffer(sizeHint).AsSpan(_written);
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private byte[] GetBuffer(int sizeHint)
         {
             var buffer = _buffer ?? throw new ObjectDisposedException(nameof(PooledBufferWriter));
@@ -182,7 +215,11 @@ public static class SexprSerializer
             {
                 return buffer;
             }
+            return GrowBuffer(buffer, required);
+        }
 
+        private byte[] GrowBuffer(byte[] buffer, int required)
+        {
             var capacity = (int)Math.Min(Math.Max((long)buffer.Length * 2, required), int.MaxValue);
             var replacement = ArrayPool<byte>.Shared.Rent(capacity);
             buffer.AsSpan(0, _written).CopyTo(replacement);

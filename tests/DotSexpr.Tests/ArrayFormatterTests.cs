@@ -81,19 +81,21 @@ public class ArrayFormatterTests
         Assert.That(readError.BytePosition, Is.EqualTo(1));
     }
 
-    [TestCase(0)]
-    [TestCase(1)]
-    public void NullElement_PreservesPath_AndDoesNotResolveBeforeFirstNull(int index)
+    [TestCase(0, false)]
+    [TestCase(1, false)]
+    [TestCase(0, true)]
+    [TestCase(1, true)]
+    public void NullElement_PreservesPath_AndDoesNotResolveBeforeFirstNull(int index, bool useDefault)
     {
         var resolver = new CountingResolver();
-        var options = new SexprSerializerOptions { Resolver = resolver };
+        var options = useDefault ? new SexprSerializerOptions() : new SexprSerializerOptions { Resolver = resolver };
         var values = index == 0 ? new string[] { null! } : new[] { "ok", null! };
 
         var error = Assert.Throws<SexprSerializerException>(() => SexprSerializer.Serialize(values, options))!;
 
         Assert.That(error.Path, Is.EqualTo($"$[{index}]"));
         Assert.That(error.Message, Does.Contain("Null values"));
-        Assert.That(resolver.StringLookups, Is.EqualTo(index));
+        Assert.That(resolver.StringLookups, Is.EqualTo(useDefault ? 0 : index));
     }
 
     [Test]
